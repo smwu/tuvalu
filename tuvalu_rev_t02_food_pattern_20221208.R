@@ -231,7 +231,6 @@ tuvalu2<-tuvalu1%>%filter(highschool==2)
 
 
 # ######################Get descriptive data######################################
-# ######################Get descriptive data######################################
 
 #Table 0. Demographics and health outcomes
 #define continuous vars as allvars
@@ -270,17 +269,19 @@ corrplot(a, tl.pos='l')
 
 
 #================= Dietary pattern analysis ===================================
-tuv_diet <- tuvalu2 %>% dplyr::select(all_of(food_names))
-names(tuv_diet) <- c("Rice", "Taro", "Breadfruit", "Fish", "Port", "Cabbage", 
+tuv_diet <- tuvalu2 %>% dplyr::select(c(`Participant No.`, all_of(food_names)))
+names(tuv_diet) <- c("Participant", "Rice", "Taro", "Breadfruit", "Fish", "Port", "Cabbage", 
                      "Bird_nest_fern", "Banana", "Coconut", "Imp_fruits", "Eggs",
                      "Sweetened_bevs", "Ice_cream", "Potatoes", "Cassava", 
                      "Instant_noodles", "Chicken", "Lamb_beef", "Cucumber", 
                      "Imp_vegs", "Papaya", "Pandanus", "Milk", 
                      "Chips_biscuits", "Cake")
-tuv_diet_compl <- tuv_diet %>% drop_na()
+tuv_diet_compl <- tuv_diet %>% drop_na() # complete cases only
+diet_na_inds <- setdiff(tuv_diet$Participant, tuv_diet_compl$Participant) # dropped id's due to NAs
+tuv_diet_compl <- tuv_diet_compl %>% dplyr::select(!(Participant))
 
 # formula for basic LCA
-f <- as.formula(paste0("cbind(", paste0(names(tuv_diet), collapse=", "), ")~1") )
+f <- as.formula(paste0("cbind(", paste0(names(tuv_diet_compl), collapse=", "), ")~1") )
 
 # Fit models with different numbers of patterns
 # nclass = number of latent classes
@@ -349,7 +350,6 @@ class_prob <- c(class_prob(lc1), class_prob(lc2), class_prob(lc3), class_prob(lc
 results <- data.frame(Model, BIC, ABIC, CAIC, log_likelihood, entropy, class_prob)
 which.min(BIC)  # K=8 corresponds to min BIC
 export_table(results, format="html")
-
 
 
 ### Model diagnostics plot
@@ -431,7 +431,201 @@ plot_pattern_modes(lc6)
 plot_pattern_modes(lc7)
 
 
-indiv_class <- lc4$pred_class
+#============================ proceeding with 4 patterns =======================
+set.seed(3)
+lc4<-poLCA(f, data=tuv_diet_compl, nclass=4, na.rm = FALSE, nrep=30, 
+           maxiter=3000, verbose=FALSE)
+plot_pattern_modes(lc4)
+### population shares of classes
+round(prop.table(table(lc4$predclass)), 4)
+entropy_R2(lc4)
+class_prob(lc4)
+
+indiv_class <- lc4$predclass
+post_probs <- lc4$posterior
+post_probs <- round(post_probs, 4)
+modal_probs <- apply(post_probs, 1, max)
+summary(modal_probs)  ## low misclassification error
+sort(modal_probs)[1:50]  ## lowest confidence predictions
+
+#================= Examine variables ===========================================
+hist(tuvalu4$age)
+hist(tuvalu4$income, breaks=30)
+summary(tuvalu4$income)
+table(tuvalu4$income)
+
+
+#================= Demographic cross tabulations ===============================
+library(sjPlot)
+library(flextable)
+library(tableone)
+library(officer)
+library(kableExtra)
+tuvalu4 <- tuvalu2[!(tuvalu2$`Participant No.` %in% diet_na_inds), ]
+tuvalu4$latent_class <- factor(indiv_class)
+tuvalu4$obesity_1 <- factor(tuvalu4$obesity_1, levels=c(0,1))
+tuvalu4$obesity_3 <- factor(tuvalu4$obesity_3, levels=c(0,1))
+table(tuvalu4$obesity_1)
+table(tuvalu4$obesity_3)
+hist(tuvalu4$wc, breaks= 20)
+
+## Alternative single-variable cross-tabulation table and plot
+# tab_xtab(var.row = tuvalu4$region_c, var.col = tuvalu4$latent_class, 
+#          title = "Demographic Cross-Tabulation", show.row.prc = TRUE)
+# plot_xtab(tuvalu4$region_c, tuvalu4$latent_class, 
+#           margin = "row", bar.pos = "stack", coord.flip = TRUE)
+
+
+# 'create_demog_table' creates a table of demographic characteristics using 
+# only the data in the specified dataset(s)
+# Input: dataset, column_names, row_names
+# Output: word document including formatted demographic table 
+create_demog_table <- function(dataset, column_names, row_names) {
+  # Create table of demographic comparisons stratified by malaria status
+  lc_demog <- CreateTableOne(vars = c("gender", "age", "education_c", "region_c",
+                                      "ncd", "smoking_c", "income", "exercise"),
+                                  factorVars = c("gender", "education_c", "region_c",
+                                                 "ncd", "smoking_c", "exercise"),
+                                  strata = "latent_class", addOverall = T,
+                                  data = dataset)
+  lc_demog_tab <- print(lc_demog, noSpaces = TRUE, nonnormal = c("age", "income"))
+  #lc_demog_tab <- print(lc_demog, noSpaces = TRUE)
+  
+  lc_demog_tab <- as.data.frame(lc_demog_tab)[, c(2:5, 1, 6)]
+  colnames(lc_demog_tab) <- column_names
+  rownames(lc_demog_tab) <- row_names
+        # lc_demog_tab <- print(lc_demog, noSpaces = TRUE, showAllLevels = TRUE)
+        # lc_demog_tab <- lc_demog_tab[,1:7] 
+        # print(lc_demog_tab) %>% kbl %>% kable_paper("hover")
+  
+  # Convert to table
+  table <- flextable(lc_demog_tab %>% rownames_to_column("Feature"))
+  table <- align(table, align = "left", part="all")
+  table <- width(table,width=0.95)
+  # Export to word
+  doc <- read_docx()
+  doc <- body_add_flextable(doc, value = table)
+  #table_name <- paste0('Table_LC_Demog.docx')
+  table_name <- paste0('Table_LC_Demographics.docx')
+  docx <- print(doc, target = table_name)
+}
+
+create_demog_table(tuvalu4, 
+                   column_names = c("Plant-Based", "Mixed", "Limited", 
+                                    "Imported", "Overall", "P-value"),
+                   row_names = c("Sample size", "Sex: Female (%)", 
+                                 "Age (median [IQR])", "Education: > HS (%)",
+                                 "Region: outlying (%)", "NCD: Reported (%)", 
+                                 "Smoking: Yes (%)", "Income (median [IQR])", 
+                                 "Exercise (%)", "   High", "   Med", "   Low"))
+
+
+create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
+                                  table_name) {
+  # Create table of demographic comparisons stratified by malaria status
+  lc_demog <- CreateTableOne(vars = c("gender", "age", "education_c", "region_c",
+                                      "ncd", "smoking_c", "income", "exercise",
+                                      "latent_class"),
+                             factorVars = c("gender", "education_c", "region_c",
+                                            "ncd", "smoking_c", "exercise",
+                                            "latent_class"),
+                             strata = strat_var, addOverall = T,
+                             data = dataset)
+  lc_demog_tab <- print(lc_demog, noSpaces = TRUE, nonnormal = c("age", "income"))
+  lc_demog_tab <- as.data.frame(lc_demog_tab)[, c(2:3, 1, 4)]
+  colnames(lc_demog_tab) <- column_names
+  rownames(lc_demog_tab) <- row_names
+
+  # Convert to table
+  table <- flextable(lc_demog_tab %>% rownames_to_column("Feature"))
+  table <- align(table, align = "left", part="all")
+  table <- width(table,width=1.5)
+  # Export to word
+  doc <- read_docx()
+  doc <- body_add_flextable(doc, value = table)
+  docx <- print(doc, target = table_name)
+}
+
+outcome_row_names <- c("Sample size", "Sex: Female (%)", 
+                       "Age (median [IQR])", "Education: > HS (%)",
+                       "Region: outlying (%)", "NCD: Reported (%)", 
+                       "Smoking: Yes (%)", "Income (median [IQR])", 
+                       "Exercise (%)", "   High", "   Med", "   Low",
+                       "Latent Class", "   Plant-Based", "   Mixed", 
+                       "   Limited", "   Imported")
+create_outcomes_table(tuvalu4, strat_var = "obesity_1",
+                   column_names = c("Not Obese", "Obese (BMI >= 30)", 
+                                    "Overall", "P-value"),
+                   row_names = outcome_row_names,
+                   table_name = "Table_LC_Outcomes.docx")
+create_outcomes_table(tuvalu4, strat_var = "obesity_3",
+                      column_names = c("Not Morbidly Obese", 
+                                       "Morbidly Obese (BMI >= 40)", 
+                                       "Overall", "P-value"),
+                      row_names = outcome_row_names,
+                      table_name = "Table_LC_Outcomes_Morbid.docx")
+
+
+#================= Regression model relating diet to obesity ===================
+library(lme4)
+tuvalu4$age_center <- tuvalu4$age - mean(tuvalu4$age, na.rm = TRUE)
+tuvalu4$latent_class <- factor(indiv_class, levels = c(2,1,3,4))
+#tuvalu4$latent_class <- factor(indiv_class, levels = c(1,2,3,4))
+
+# don't include gender since no association
+# don't include income
+## OBESITY
+fit_ob1 <- glmer(obesity_1 ~ latent_class + age_center + education_c + 
+                  smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
+                 family = binomial, nAGQ = 10)  # higher nAGQ -> higher accuracy
+summary(fit_ob1)
+res_ob1 <- summary(fit_ob1)
+OR_ob1 <- data.frame(exp(res_ob1$coefficients[,1]))
+colnames(OR_ob1) <- c("Cond'l OR")
+OR_ob1
+
+## MORBID OBESITY
+fit_ob3 <- glmer(obesity_3 ~ latent_class + age_center + education_c + 
+                   smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
+                 family = binomial, nAGQ = 10)  # higher nAGQ -> higher accuracy
+summary(fit_ob3)
+res_ob3 <- summary(fit_ob3)
+OR_ob3 <- data.frame(exp(res_ob3$coefficients[,3]))
+colnames(OR_ob3) <- c("Cond'l OR")
+OR_ob3
+
+## WAIST CIRCUMFERENCE
+fit_wc <- lmer(wc ~ latent_class + age_center + education_c + 
+                   smoking_c + exercise + ncd + (1|region_c), data = tuvalu4)  
+summary(fit_wc)
+
+### CHECK MORBID OBESITY CODING
+# ============ Fit using Bayesian hierarchical modeling ========================
+library(rstanarm)
+options(mc.cores = 4)
+fit_ob1 <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + education_c + 
+                        smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
+                      family = binomial, adapt_delta = 0.99) 
+summary(fit_ob1)
+OR_ob1 <- data.frame(exp(fit_ob1$coefficients))
+colnames(OR_ob1) <- c("Cond'l OR")
+OR_ob1
+posterior_interval(fit_ob1, prob = 0.95)
+
+fit_ob3 <- stan_glmer(obesity_3 ~ latent_class + gender + age_center + education_c + 
+                      smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
+                      family = binomial, adapt_delta = 0.999) 
+summary(fit_ob3)
+posterior_interval(fit_ob3, prob = 0.95)
+OR_ob3 <- data.frame(exp(fit_ob3$coefficients))
+colnames(OR_ob3) <- c("Cond'l OR")
+OR_ob3
+
+fit_wc <- stan_glmer(wc ~ latent_class + gender + age_center + education_c + 
+                 smoking_c + exercise + ncd + (1|region_c), data = tuvalu4,
+                 adapt_delta = 0.999)  
+summary(fit_wc)
+posterior_interval(fit_wc, prob = 0.95)
 
 
 #================= Miscellaneous code ============================================
