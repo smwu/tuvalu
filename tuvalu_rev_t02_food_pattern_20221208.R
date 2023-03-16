@@ -223,6 +223,9 @@ tuvalu1<-tuvalu%>%mutate(
   covid_6=as.integer(Q46),
   covid_7=as.integer(Q47)
 )
+
+write_csv(tuvalu1, "clean_data_2022.csv")
+
 #Get food item names
 food_names <- names(tuvalu1[c(38:62)])
 
