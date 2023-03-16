@@ -449,6 +449,10 @@ summary(modal_probs)  ## low misclassification error
 sort(modal_probs)[1:50]  ## lowest confidence predictions
 
 #================= Examine variables ===========================================
+tuvalu4 <- tuvalu2[!(tuvalu2$`Participant No.` %in% diet_na_inds), ]
+tuvalu4$latent_class <- factor(indiv_class)
+tuvalu4$obesity_1 <- factor(tuvalu4$obesity_1, levels=c(0,1))
+tuvalu4$obesity_3 <- factor(tuvalu4$obesity_3, levels=c(0,1))
 hist(tuvalu4$age)
 hist(tuvalu4$income, breaks=30)
 summary(tuvalu4$income)
@@ -461,10 +465,6 @@ library(flextable)
 library(tableone)
 library(officer)
 library(kableExtra)
-tuvalu4 <- tuvalu2[!(tuvalu2$`Participant No.` %in% diet_na_inds), ]
-tuvalu4$latent_class <- factor(indiv_class)
-tuvalu4$obesity_1 <- factor(tuvalu4$obesity_1, levels=c(0,1))
-tuvalu4$obesity_3 <- factor(tuvalu4$obesity_3, levels=c(0,1))
 table(tuvalu4$obesity_1)
 table(tuvalu4$obesity_3)
 hist(tuvalu4$wc, breaks= 20)
