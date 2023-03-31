@@ -273,7 +273,7 @@ corrplot(a, tl.pos='l')
 
 #================= Dietary pattern analysis ===================================
 tuv_diet <- tuvalu2 %>% dplyr::select(c(`Participant No.`, all_of(food_names)))
-names(tuv_diet) <- c("Participant", "Rice", "Taro", "Breadfruit", "Fish", "Port", "Cabbage", 
+names(tuv_diet) <- c("Participant", "Rice", "Taro", "Breadfruit", "Fish", "Pork", "Cabbage", 
                      "Bird_nest_fern", "Banana", "Coconut", "Imp_fruits", "Eggs",
                      "Sweetened_bevs", "Ice_cream", "Potatoes", "Cassava", 
                      "Instant_noodles", "Chicken", "Lamb_beef", "Cucumber", 
@@ -573,6 +573,8 @@ create_outcomes_table(tuvalu4, strat_var = "obesity_3",
 library(lme4)
 tuvalu4$age_center <- tuvalu4$age - mean(tuvalu4$age, na.rm = TRUE)
 tuvalu4$latent_class <- factor(indiv_class, levels = c(2,1,3,4))
+tuvalu4$height_center <- tuvalu4$`Height (cm)` - mean(tuvalu4$`Height (cm)`, 
+                                                      na.rm = TRUE)
 #tuvalu4$latent_class <- factor(indiv_class, levels = c(1,2,3,4))
 
 # don't include gender since no association
@@ -606,6 +608,7 @@ summary(fit_wc)
 # ============ Fit using Bayesian hierarchical modeling ========================
 library(rstanarm)
 options(mc.cores = 4)
+# OBESITY
 fit_ob1 <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + education_c + 
                         smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
                       family = binomial, adapt_delta = 0.99) 
@@ -615,6 +618,7 @@ colnames(OR_ob1) <- c("Cond'l OR")
 OR_ob1
 posterior_interval(fit_ob1, prob = 0.95)
 
+# MORBID OBESITY
 fit_ob3 <- stan_glmer(obesity_3 ~ latent_class + gender + age_center + education_c + 
                       smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
                       family = binomial, adapt_delta = 0.999) 
@@ -624,12 +628,19 @@ OR_ob3 <- data.frame(exp(fit_ob3$coefficients))
 colnames(OR_ob3) <- c("Cond'l OR")
 OR_ob3
 
+# WAIST CIRCUMFERENCE
 fit_wc <- stan_glmer(wc ~ latent_class + gender + age_center + education_c + 
                  smoking_c + exercise + ncd + (1|region_c), data = tuvalu4,
                  adapt_delta = 0.999)  
 summary(fit_wc)
 posterior_interval(fit_wc, prob = 0.95)
 
+# WEIGHT (adding height as a variable)
+fit_wt <- stan_glmer(`Weight (kg)` ~ latent_class + gender + age_center + education_c + 
+                       smoking_c + exercise + ncd + height_center + (1|region_c), 
+                     data = tuvalu4, adapt_delta = 0.999)  
+summary(fit_wt)
+posterior_interval(fit_wt, prob = 0.95)
 
 #================= Miscellaneous code ============================================
 ## Alternative code for changing levels of the factors
