@@ -11,6 +11,9 @@ library(corrplot)
 library(poLCA)
 library(insight)
 library(forcats)
+library(lme4)
+library(rstanarm)
+options(mc.cores = 4)
 
 #==================== Helper functions ================================
 #Create functions to extract estimate, CI and p-values
@@ -224,7 +227,7 @@ tuvalu1<-tuvalu%>%mutate(
   covid_7=as.integer(Q47)
 )
 
-write_csv(tuvalu1, "clean_data_2022.csv")
+#write_csv(tuvalu1, "clean_data_2022.csv")
 
 #Get food item names
 food_names <- names(tuvalu1[c(38:62)])
@@ -413,13 +416,17 @@ plot_pattern_probs(lc5)
 plot_pattern_probs(lc6)
 plot_pattern_probs(lc7)
 
-
-plot_pattern_modes <- function(model) {
+plot_pattern_modes <- function(model, names_list = NULL) {
   est_item_probs <- model$probs
   mode_item_probs <- lapply(est_item_probs, function(x) apply(x, 1, which.max))
   mode_item_probs <- as.data.frame(do.call("rbind", mode_item_probs))
-  mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs), 
-                                         levels=rownames(mode_item_probs)))
+  if (is.null(names_list)) {
+    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs), 
+                                           levels=rownames(mode_item_probs)))
+  } else {
+    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs),
+                                           levels=names_list))
+  }
   mode_plot <- mode_item_probs %>% gather("Class", "Level", -Item) 
   mode_plot %>% ggplot(aes(x=Class, y=Item, fill=Level)) + 
     geom_tile(color="black") + 
@@ -433,11 +440,24 @@ plot_pattern_modes(lc5)
 plot_pattern_modes(lc6)
 plot_pattern_modes(lc7)
 
-
 #============================ proceeding with 4 patterns =======================
 set.seed(3)
 lc4<-poLCA(f, data=tuv_diet_compl, nclass=4, na.rm = FALSE, nrep=30, 
            maxiter=3000, verbose=FALSE)
+names_by_local <- c("Cassava", "Taro", "Breadfruit", "Cabbage", "Bird_nest_fern", 
+                    "Banana", "Coconut", "Papaya", "Pandanus", "Cucumber", "Fish",
+                    "Rice", "Potatoes", "Imp_fruits", "Imp_vegs", "Chicken", 
+                    "Lamb_beef", "Eggs", "Milk", "Pork", "Sweetened_bevs", 
+                    "Ice_cream", "Instant_noodles", "Chips_biscuits", "Cake") 
+names_by_group <- c("Cassava", "Taro", "Rice", "Potatoes", 
+                    "Breadfruit", "Cabbage", "Bird_nest_fern", "Banana", "Coconut", 
+                    "Papaya", "Pandanus", "Cucumber", "Imp_fruits", "Imp_vegs", 
+                    "Fish", "Chicken", "Lamb_beef", "Pork", 
+                    "Eggs", "Milk", 
+                    "Sweetened_bevs", "Ice_cream", "Instant_noodles",
+                    "Chips_biscuits", "Cake") 
+plot_pattern_modes(lc4, names_by_local)
+plot_pattern_modes(lc4, names_by_group)
 plot_pattern_modes(lc4)
 ### population shares of classes
 round(prop.table(table(lc4$predclass)), 4)
@@ -453,13 +473,70 @@ sort(modal_probs)[1:50]  ## lowest confidence predictions
 
 #================= Examine variables ===========================================
 tuvalu4 <- tuvalu2[!(tuvalu2$`Participant No.` %in% diet_na_inds), ]
-tuvalu4$latent_class <- factor(indiv_class)
+tuvalu4$latent_class <- factor(indiv_class, levels=c(2, 1, 3, 4))
 tuvalu4$obesity_1 <- factor(tuvalu4$obesity_1, levels=c(0,1))
 tuvalu4$obesity_3 <- factor(tuvalu4$obesity_3, levels=c(0,1))
+tuvalu4$age_center <- tuvalu4$age - mean(tuvalu4$age, na.rm = TRUE)
+tuvalu4$Pattern <- factor(indiv_class, levels = c(1,2,3,4))
+tuvalu4$height_center <- tuvalu4$`Height (cm)` - mean(tuvalu4$`Height (cm)`, 
+                                                      na.rm = TRUE)
+
 hist(tuvalu4$age)
 hist(tuvalu4$income, breaks=30)
 summary(tuvalu4$income)
 table(tuvalu4$income)
+
+# Age
+tuvalu4 %>% ggplot(aes(x = age, group = Pattern, fill = Pattern, col = Pattern)) +
+  theme_bw() + 
+  geom_density(alpha = 0.4) + 
+  ggtitle("Dietary Pattern by Age") + xlab("Age") + ylab("Density")
+# Sex
+tuvalu4 %>% ggplot(aes(x = gender, fill = Pattern, col = Pattern)) +
+  theme_bw() + 
+  geom_bar(position = "dodge") + 
+  scale_x_discrete(labels = c("M", "F")) + 
+  facet_grid(~Pattern) +
+  ggtitle("Dietary Pattern by Sex") + xlab("Sex") + ylab("Count")
+# Education
+tuvalu4 %>% filter(!is.na(education_c)) %>%
+  ggplot(aes(x = education_c, fill = Pattern, col = Pattern)) +
+  theme_bw() + 
+  geom_bar(position = "dodge") + 
+  scale_x_discrete(labels = c("<=HS", ">HS")) + 
+  facet_grid(~Pattern) +
+  ggtitle("Dietary Pattern by Education") + xlab("Education") + ylab("Count")
+# Region
+tuvalu4 %>% ggplot(aes(x = region_c, fill = Pattern, col = Pattern)) +
+  theme_bw() + 
+  geom_bar(position = "dodge") + 
+  scale_x_discrete(labels = c("Main", "Other")) + 
+  facet_grid(~Pattern) +
+  ggtitle("Dietary Pattern by Region") + xlab("Region") + ylab("Count")
+# NCD
+tuvalu4 %>% filter(!is.na(ncd)) %>% 
+  ggplot(aes(x = ncd, fill = Pattern, col = Pattern)) +
+  theme_bw() + 
+  geom_bar(position = "dodge") + 
+  scale_x_discrete(labels = c("No", "Yes")) + 
+  facet_grid(~Pattern) +
+  ggtitle("Dietary Pattern by NCD Status") + xlab("NCD Reported") + ylab("Count")
+# Smoking
+tuvalu4 %>% filter(!is.na(smoking_c)) %>% 
+  ggplot(aes(x = smoking_c, fill = Pattern, col = Pattern)) +
+  theme_bw() + 
+  geom_bar(position = "dodge") + 
+  scale_x_discrete(labels = c("No", "Yes")) + 
+  facet_grid(~Pattern) +
+  ggtitle("Dietary Pattern by Smoking") + xlab("Smoking Status") + ylab("Count")
+# Exercise
+tuvalu4 %>% filter(!is.na(exercise)) %>% 
+  ggplot(aes(x = exercise, fill = Pattern, col = Pattern)) +
+  theme_bw() + 
+  geom_bar(position = "dodge") + 
+  scale_x_discrete(labels = c("High", "Med", "Low")) + 
+  facet_grid(~Pattern) +
+  ggtitle("Dietary Pattern by Exercise") + xlab("Exercise") + ylab("Count")
 
 
 #================= Demographic cross tabulations ===============================
@@ -522,7 +599,6 @@ create_demog_table(tuvalu4,
                                  "Smoking: Yes (%)", "Income (median [IQR])", 
                                  "Exercise (%)", "   High", "   Med", "   Low"))
 
-
 create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
                                   table_name) {
   # Create table of demographic comparisons stratified by malaria status
@@ -570,57 +646,153 @@ create_outcomes_table(tuvalu4, strat_var = "obesity_3",
 
 
 #================= Regression model relating diet to obesity ===================
-library(lme4)
-tuvalu4$age_center <- tuvalu4$age - mean(tuvalu4$age, na.rm = TRUE)
-tuvalu4$latent_class <- factor(indiv_class, levels = c(2,1,3,4))
-tuvalu4$height_center <- tuvalu4$`Height (cm)` - mean(tuvalu4$`Height (cm)`, 
-                                                      na.rm = TRUE)
-#tuvalu4$latent_class <- factor(indiv_class, levels = c(1,2,3,4))
-
-# don't include gender since no association
-# don't include income
-## OBESITY
-fit_ob1 <- glmer(obesity_1 ~ latent_class + age_center + education_c + 
-                  smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
-                 family = binomial, nAGQ = 10)  # higher nAGQ -> higher accuracy
-summary(fit_ob1)
-res_ob1 <- summary(fit_ob1)
-OR_ob1 <- data.frame(exp(res_ob1$coefficients[,1]))
-colnames(OR_ob1) <- c("Cond'l OR")
-OR_ob1
-
-## MORBID OBESITY
-fit_ob3 <- glmer(obesity_3 ~ latent_class + age_center + education_c + 
-                   smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
-                 family = binomial, nAGQ = 10)  # higher nAGQ -> higher accuracy
-summary(fit_ob3)
-res_ob3 <- summary(fit_ob3)
-OR_ob3 <- data.frame(exp(res_ob3$coefficients[,3]))
-colnames(OR_ob3) <- c("Cond'l OR")
-OR_ob3
-
-## WAIST CIRCUMFERENCE
-fit_wc <- lmer(wc ~ latent_class + age_center + education_c + 
-                   smoking_c + exercise + ncd + (1|region_c), data = tuvalu4)  
-summary(fit_wc)
+# # don't include gender since no association
+# # don't include income
+# ## OBESITY
+# fit_ob1 <- glmer(obesity_1 ~ latent_class + age_center + education_c + 
+#                   smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
+#                  family = binomial, nAGQ = 10)  # higher nAGQ -> higher accuracy
+# summary(fit_ob1)
+# res_ob1 <- summary(fit_ob1)
+# OR_ob1 <- data.frame(exp(res_ob1$coefficients[,1]))
+# colnames(OR_ob1) <- c("Cond'l OR")
+# OR_ob1
+# 
+# ## MORBID OBESITY
+# fit_ob3 <- glmer(obesity_3 ~ latent_class + age_center + education_c + 
+#                    smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
+#                  family = binomial, nAGQ = 10)  # higher nAGQ -> higher accuracy
+# summary(fit_ob3)
+# res_ob3 <- summary(fit_ob3)
+# OR_ob3 <- data.frame(exp(res_ob3$coefficients[,3]))
+# colnames(OR_ob3) <- c("Cond'l OR")
+# OR_ob3
+# 
+# ## WAIST CIRCUMFERENCE
+# fit_wc <- lmer(wc ~ latent_class + age_center + education_c + 
+#                    smoking_c + exercise + ncd + (1|region_c), data = tuvalu4)  
+# summary(fit_wc)
 
 ### CHECK MORBID OBESITY CODING
 # ============ Fit using Bayesian hierarchical modeling ========================
-library(rstanarm)
-options(mc.cores = 4)
+get_output <- function(fit, exponentiate = TRUE) {
+  if (exponentiate) {
+    output <- data.frame(exp(fit$coefficients),
+                         exp(posterior_interval(fit, prob = 0.95)[1:length(fit$coefficients),]))
+    colnames(output) <- c("Cond'l OR", "2.5%", "97.5%")
+  } else {
+    output <- data.frame(fit$coefficients,
+                         posterior_interval(fit, prob = 0.95)[1:length(fit$coefficients),])
+    colnames(output) <- c("Mean", "2.5%", "97.5%")
+  }
+  print(paste0("Number of observations: ", nobs(fit)))
+  print(output)
+}
+set.seed(1)
 # OBESITY
 fit_ob1 <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + education_c + 
                         smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
-                      family = binomial, adapt_delta = 0.99) 
-summary(fit_ob1)
-OR_ob1 <- data.frame(exp(fit_ob1$coefficients))
-colnames(OR_ob1) <- c("Cond'l OR")
-OR_ob1
-posterior_interval(fit_ob1, prob = 0.95)
+                      family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob1)
 
 # MORBID OBESITY
 fit_ob3 <- stan_glmer(obesity_3 ~ latent_class + gender + age_center + education_c + 
                       smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
+                      family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob3)
+
+# WEIGHT (adding height as a variable)
+fit_wt <- stan_glmer(`Weight (kg)` ~ latent_class + gender + age_center + education_c + 
+                       smoking_c + exercise + ncd + height_center + (1|region_c), 
+                     data = tuvalu4, adapt_delta = 0.999)  
+get_output(fit_wt, exponentiate = FALSE)
+
+
+# WAIST CIRCUMFERENCE
+fit_wc <- stan_glmer(wc ~ latent_class + gender + age_center + education_c + 
+                       smoking_c + exercise + ncd + (1|region_c), data = tuvalu4,
+                     adapt_delta = 0.999)  
+summary(fit_wc)
+posterior_interval(fit_wc, prob = 0.95)
+
+#================= Stratified analyses =========================================
+# OBESITY
+fit_ob1 <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + education_c + 
+                        smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
+                      family = binomial, adapt_delta = 0.99) 
+get_output(fit_ob1)
+
+### Gender
+fit_ob1_m <- stan_glmer(obesity_1 ~ latent_class + age_center + education_c + 
+                          smoking_c + exercise + ncd + (1|region_c), 
+                        data = tuvalu4[tuvalu4$gender == 1, ], 
+                        family = binomial, adapt_delta = 0.999) 
+fit_ob1_f <- stan_glmer(obesity_1 ~ latent_class + age_center + education_c + 
+                          smoking_c + exercise + ncd + (1|region_c), 
+                        data = tuvalu4[tuvalu4$gender == 2, ], 
+                        family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob1_m)
+get_output(fit_ob1_f)
+
+### Education
+fit_ob1_more_hs <- stan_glmer(obesity_1 ~ latent_class + gender + age_center +  
+                          smoking_c + exercise + ncd + (1|region_c), 
+                        data = tuvalu4[tuvalu4$education_c == 1, ], 
+                        family = binomial, adapt_delta = 0.999) 
+fit_ob1_hs <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
+                          smoking_c + exercise + ncd + (1|region_c), 
+                        data = tuvalu4[tuvalu4$education_c == 0, ], 
+                        family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob1_more_hs)
+get_output(fit_ob1_hs)
+
+### Smoking
+fit_ob1_smoke <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
+                          education_c + exercise + ncd + (1|region_c), 
+                        data = tuvalu4[tuvalu4$smoking_c == 1, ], 
+                        family = binomial, adapt_delta = 0.999) 
+fit_ob1_no_smoke <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
+                                 education_c + exercise + ncd + (1|region_c), 
+                        data = tuvalu4[tuvalu4$smoking_c == 0, ], 
+                        family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob1_smoke)
+get_output(fit_ob1_no_smoke)
+
+### NCD
+fit_ob1_ncd <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
+                              education_c + smoking_c + exercise + (1|region_c), 
+                            data = tuvalu4[tuvalu4$ncd == 1, ], 
+                            family = binomial, adapt_delta = 0.999) 
+fit_ob1_no_ncd <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
+                               education_c + smoking_c + exercise + (1|region_c), 
+                             data = tuvalu4[tuvalu4$ncd == 0, ], 
+                             family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob1_ncd)
+get_output(fit_ob1_no_ncd)
+
+### Exercise
+fit_ob1_exer_h <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
+                          education_c + smoking_c + ncd + (1|region_c), 
+                        data = tuvalu4[tuvalu4$exercise == 1, ], 
+                        family = binomial, adapt_delta = 0.999) 
+fit_ob1_exer_m <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
+                               education_c + smoking_c + ncd + (1|region_c), 
+                             data = tuvalu4[tuvalu4$exercise == 2, ], 
+                             family = binomial, adapt_delta = 0.999) 
+fit_ob1_exer_l <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
+                               education_c + smoking_c + ncd + (1|region_c), 
+                             data = tuvalu4[tuvalu4$exercise == 3, ], 
+                             family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob1_exer_h)
+get_output(fit_ob1_exer_m)
+get_output(fit_ob1_exer_l)
+
+
+
+
+# MORBID OBESITY
+fit_ob3 <- stan_glmer(obesity_3 ~ latent_class + gender + age_center + education_c + 
+                        smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
                       family = binomial, adapt_delta = 0.999) 
 summary(fit_ob3)
 posterior_interval(fit_ob3, prob = 0.95)
@@ -628,19 +800,13 @@ OR_ob3 <- data.frame(exp(fit_ob3$coefficients))
 colnames(OR_ob3) <- c("Cond'l OR")
 OR_ob3
 
-# WAIST CIRCUMFERENCE
-fit_wc <- stan_glmer(wc ~ latent_class + gender + age_center + education_c + 
-                 smoking_c + exercise + ncd + (1|region_c), data = tuvalu4,
-                 adapt_delta = 0.999)  
-summary(fit_wc)
-posterior_interval(fit_wc, prob = 0.95)
-
 # WEIGHT (adding height as a variable)
 fit_wt <- stan_glmer(`Weight (kg)` ~ latent_class + gender + age_center + education_c + 
                        smoking_c + exercise + ncd + height_center + (1|region_c), 
                      data = tuvalu4, adapt_delta = 0.999)  
 summary(fit_wt)
 posterior_interval(fit_wt, prob = 0.95)
+
 
 #================= Miscellaneous code ============================================
 ## Alternative code for changing levels of the factors
