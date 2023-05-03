@@ -3,7 +3,7 @@
 library(tidyverse)
 library(readxl)
 library(lubridate)
-library(tableone)
+library(tableone)  # create Table 1
 #Output file to excel
 library(openxlsx)
 #Make plot
@@ -14,6 +14,15 @@ library(forcats)
 library(lme4)
 library(rstanarm)
 options(mc.cores = 4)
+library(sjPlot)
+library(flextable)
+library(officer)
+library(kableExtra)
+library(epade)
+library(tidyLPA)  # LMR test
+library(ggpubr)  # grid of plots
+library(gt)
+
 
 #==================== Helper functions ================================
 #Create functions to extract estimate, CI and p-values
@@ -259,7 +268,7 @@ tab2<-  print(table2, noSpaces=TRUE)
 tab2<-  as.data.frame(cbind(rowname=rownames(tab2),tab2))
 
 #export the tables to excel at working folder
-write.xlsx(list("Table0. Demographics"=tab0,"Table 1. Food intake" = tab1, "Table 2. Food intake (islands)" = tab2), file = "Food_intake_Descriptive_analysis_T02.xlsx") 
+# write.xlsx(list("Table0. Demographics"=tab0,"Table 1. Food intake" = tab1, "Table 2. Food intake (islands)" = tab2), file = "Food_intake_Descriptive_analysis_T02.xlsx") 
 
 #Correlation plot
 #Complete case
@@ -285,6 +294,8 @@ names(tuv_diet) <- c("Participant", "Rice", "Taro", "Breadfruit", "Fish", "Pork"
 tuv_diet_compl <- tuv_diet %>% drop_na() # complete cases only
 diet_na_inds <- setdiff(tuv_diet$Participant, tuv_diet_compl$Participant) # dropped id's due to NAs
 tuv_diet_compl <- tuv_diet_compl %>% dplyr::select(!(Participant))
+# Save data
+# write.csv(tuv_diet_compl, "diet_pattern_data.csv")
 
 # formula for basic LCA
 f <- as.formula(paste0("cbind(", paste0(names(tuv_diet_compl), collapse=", "), ")~1") )
@@ -377,7 +388,6 @@ all_sizes <- list(sizes_lc4, sizes_lc5, sizes_lc6, sizes_lc7, sizes_lc8)
 lapply(all_sizes, print)
 
 # LMR Test
-library(tidyLPA)
 lrt <- function(null, alt) {
   calc_lrt(null$Nobs, null$llik, null$npar, length(null$P), 
            alt$llik, alt$npar, length(alt$P))
@@ -442,6 +452,9 @@ plot_pattern_modes(lc7)
 
 #============================ proceeding with 4 patterns =======================
 set.seed(3)
+tuv_diet_compl <- read.csv("diet_pattern_data.csv")
+# formula for basic LCA
+f <- as.formula(paste0("cbind(", paste0(names(tuv_diet_compl), collapse=", "), ")~1") )
 lc4<-poLCA(f, data=tuv_diet_compl, nclass=4, na.rm = FALSE, nrep=30, 
            maxiter=3000, verbose=FALSE)
 names_by_local <- c("Cassava", "Taro", "Breadfruit", "Cabbage", "Bird_nest_fern", 
@@ -464,7 +477,6 @@ round(prop.table(table(lc4$predclass)), 4)
 entropy_R2(lc4)
 class_prob(lc4)
 
-indiv_class <- lc4$predclass
 post_probs <- lc4$posterior
 post_probs <- round(post_probs, 4)
 modal_probs <- apply(post_probs, 1, max)
@@ -473,6 +485,7 @@ sort(modal_probs)[1:50]  ## lowest confidence predictions
 
 #================= Examine variables ===========================================
 tuvalu4 <- tuvalu2[!(tuvalu2$`Participant No.` %in% diet_na_inds), ]
+indiv_class <- lc4$predclass
 tuvalu4$latent_class <- factor(indiv_class, levels=c(2, 1, 3, 4))
 tuvalu4$obesity_1 <- factor(tuvalu4$obesity_1, levels=c(0,1))
 tuvalu4$obesity_3 <- factor(tuvalu4$obesity_3, levels=c(0,1))
@@ -480,71 +493,79 @@ tuvalu4$age_center <- tuvalu4$age - mean(tuvalu4$age, na.rm = TRUE)
 tuvalu4$Pattern <- factor(indiv_class, levels = c(1,2,3,4))
 tuvalu4$height_center <- tuvalu4$`Height (cm)` - mean(tuvalu4$`Height (cm)`, 
                                                       na.rm = TRUE)
+# Save data for analysis
+# write.csv(tuvalu4, "diet_pattern_data_analysis.csv")
 
 hist(tuvalu4$age)
 hist(tuvalu4$income, breaks=30)
 summary(tuvalu4$income)
 table(tuvalu4$income)
 
+factor_cols <- c("region_c", "obesity_1", "obesity_3", "gender", "age_c", 
+                 "education_c", "income_c", "ncd", "marital", "smoking_c", 
+                 "alcohol_c", "latent_class", "Pattern", "exercise")
+tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
+tuvalu4 <- tuvalu4 %>% mutate_at(factor_cols, as.factor)
+
+
 # Age
-tuvalu4 %>% ggplot(aes(x = age, group = Pattern, fill = Pattern, col = Pattern)) +
+g1 <- tuvalu4 %>% ggplot(aes(x = age, group = Pattern, fill = Pattern, col = Pattern)) +
   theme_bw() + 
   geom_density(alpha = 0.4) + 
-  ggtitle("Dietary Pattern by Age") + xlab("Age") + ylab("Density")
+  ggtitle("Dietary Patterns by Age") + xlab("Age") + ylab("Density")
 # Sex
-tuvalu4 %>% ggplot(aes(x = gender, fill = Pattern, col = Pattern)) +
+g2 <- tuvalu4 %>% ggplot(aes(x = gender, fill = Pattern, col = Pattern)) +
   theme_bw() + 
   geom_bar(position = "dodge") + 
   scale_x_discrete(labels = c("M", "F")) + 
   facet_grid(~Pattern) +
-  ggtitle("Dietary Pattern by Sex") + xlab("Sex") + ylab("Count")
+  ggtitle("Dietary Patterns by Sex") + xlab("Sex") + ylab("Count")
 # Education
-tuvalu4 %>% filter(!is.na(education_c)) %>%
+g3 <- tuvalu4 %>% filter(!is.na(education_c)) %>%
   ggplot(aes(x = education_c, fill = Pattern, col = Pattern)) +
   theme_bw() + 
   geom_bar(position = "dodge") + 
   scale_x_discrete(labels = c("<=HS", ">HS")) + 
   facet_grid(~Pattern) +
-  ggtitle("Dietary Pattern by Education") + xlab("Education") + ylab("Count")
+  ggtitle("Dietary Patterns by Education") + xlab("Education") + ylab("Count")
 # Region
-tuvalu4 %>% ggplot(aes(x = region_c, fill = Pattern, col = Pattern)) +
+g4 <- tuvalu4 %>% ggplot(aes(x = region_c, fill = Pattern, col = Pattern)) +
   theme_bw() + 
   geom_bar(position = "dodge") + 
   scale_x_discrete(labels = c("Main", "Other")) + 
   facet_grid(~Pattern) +
-  ggtitle("Dietary Pattern by Region") + xlab("Region") + ylab("Count")
+  ggtitle("Dietary Patterns by Region") + xlab("Region") + ylab("Count")
 # NCD
-tuvalu4 %>% filter(!is.na(ncd)) %>% 
+g5 <- tuvalu4 %>% filter(!is.na(ncd)) %>% 
   ggplot(aes(x = ncd, fill = Pattern, col = Pattern)) +
   theme_bw() + 
   geom_bar(position = "dodge") + 
   scale_x_discrete(labels = c("No", "Yes")) + 
   facet_grid(~Pattern) +
-  ggtitle("Dietary Pattern by NCD Status") + xlab("NCD Reported") + ylab("Count")
+  ggtitle("Dietary Patterns by NCD Status") + xlab("NCD Reported") + ylab("Count")
 # Smoking
-tuvalu4 %>% filter(!is.na(smoking_c)) %>% 
+g6 <- tuvalu4 %>% filter(!is.na(smoking_c)) %>% 
   ggplot(aes(x = smoking_c, fill = Pattern, col = Pattern)) +
   theme_bw() + 
   geom_bar(position = "dodge") + 
   scale_x_discrete(labels = c("No", "Yes")) + 
   facet_grid(~Pattern) +
-  ggtitle("Dietary Pattern by Smoking") + xlab("Smoking Status") + ylab("Count")
+  ggtitle("Dietary Patterns by Smoking") + xlab("Smoking Status") + ylab("Count")
 # Exercise
-tuvalu4 %>% filter(!is.na(exercise)) %>% 
+g7 <- tuvalu4 %>% filter(!is.na(exercise)) %>% 
   ggplot(aes(x = exercise, fill = Pattern, col = Pattern)) +
   theme_bw() + 
   geom_bar(position = "dodge") + 
   scale_x_discrete(labels = c("High", "Med", "Low")) + 
   facet_grid(~Pattern) +
-  ggtitle("Dietary Pattern by Exercise") + xlab("Exercise") + ylab("Count")
+  ggtitle("Dietary Patterns by Exercise") + xlab("Exercise") + ylab("Count")
 
+ggarrange(g1, g2, g3, g4, g5, g6, g7, nrow = 2, ncol = 4, common.legend = TRUE,
+          legend = "bottom")
 
 #================= Demographic cross tabulations ===============================
-library(sjPlot)
-library(flextable)
-library(tableone)
-library(officer)
-library(kableExtra)
+tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
+
 table(tuvalu4$obesity_1)
 table(tuvalu4$obesity_3)
 hist(tuvalu4$wc, breaks= 20)
@@ -562,9 +583,11 @@ hist(tuvalu4$wc, breaks= 20)
 # Output: word document including formatted demographic table 
 create_demog_table <- function(dataset, column_names, row_names) {
   # Create table of demographic comparisons stratified by malaria status
-  lc_demog <- CreateTableOne(vars = c("gender", "age", "education_c", "region_c",
+  lc_demog <- CreateTableOne(vars = c("gender", "age", "age_c", "education_c", 
+                                      "region_c",
                                       "ncd", "smoking_c", "income", "exercise"),
-                                  factorVars = c("gender", "education_c", "region_c",
+                                  factorVars = c("gender", "age_c", "education_c", 
+                                                 "region_c",
                                                  "ncd", "smoking_c", "exercise"),
                                   strata = "latent_class", addOverall = T,
                                   data = dataset)
@@ -579,25 +602,30 @@ create_demog_table <- function(dataset, column_names, row_names) {
         # print(lc_demog_tab) %>% kbl %>% kable_paper("hover")
   
   # Convert to table
-  table <- flextable(lc_demog_tab %>% rownames_to_column("Feature"))
+  table <- flextable(lc_demog_tab %>% rownames_to_column("Demographic Variable"))
   table <- align(table, align = "left", part="all")
-  table <- width(table,width=0.95)
+  table <- width(table, width=1.1)
   # Export to word
   doc <- read_docx()
+  doc <- body_add_par(doc, "Table 1: Distribution of dietary patterns by demographic variables.", 
+                      style = "table title")
   doc <- body_add_flextable(doc, value = table)
   #table_name <- paste0('Table_LC_Demog.docx')
-  table_name <- paste0('Table_LC_Demographics.docx')
+  table_name <- paste0('Table_LC_Demographics_FINAL.docx')
   docx <- print(doc, target = table_name)
 }
 
 create_demog_table(tuvalu4, 
-                   column_names = c("Plant-Based", "Mixed", "Limited", 
+                   column_names = c("Neo-Local", "Mixed-Local", "Mixed-Imported", 
                                     "Imported", "Overall", "P-value"),
-                   row_names = c("Sample size", "Sex: Female (%)", 
-                                 "Age (median [IQR])", "Education: > HS (%)",
-                                 "Region: outlying (%)", "NCD: Reported (%)", 
-                                 "Smoking: Yes (%)", "Income (median [IQR])", 
-                                 "Exercise (%)", "   High", "   Med", "   Low"))
+                   row_names = c("Sample Size", "Sex: Female (%)", 
+                                 "Median Age [IQR]", "Age",
+                                 "   (0, 30]", "   (30, 40]", "   (40, 50]", 
+                                 "   (50, 60]", "   (60, 70]", "   [70, Inf)",
+                                 "Education: >HS (%)",
+                                 "Region: Outlying (%)", "NCD: Reported (%)", 
+                                 "Smoking: Yes (%)", "Median Income [IQR]", 
+                                 "Exercise (%)", "   High", "   Medium", "   Low"))
 
 create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
                                   table_name) {
@@ -675,38 +703,171 @@ create_outcomes_table(tuvalu4, strat_var = "obesity_3",
 
 ### CHECK MORBID OBESITY CODING
 # ============ Fit using Bayesian hierarchical modeling ========================
+tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
+factor_cols <- c("region_c", "obesity_1", "obesity_3", "gender", "age_c", 
+                 "education_c", "income_c", "ncd", "marital", "smoking_c", 
+                 "alcohol_c", "latent_class", "Pattern", "exercise")
+tuvalu4 <- tuvalu4 %>% mutate_at(factor_cols, as.factor)
+
 get_output <- function(fit, exponentiate = TRUE) {
   if (exponentiate) {
     output <- data.frame(exp(fit$coefficients),
                          exp(posterior_interval(fit, prob = 0.95)[1:length(fit$coefficients),]))
     colnames(output) <- c("Cond'l OR", "2.5%", "97.5%")
+    cutoff <- 1
   } else {
     output <- data.frame(fit$coefficients,
                          posterior_interval(fit, prob = 0.95)[1:length(fit$coefficients),])
     colnames(output) <- c("Mean", "2.5%", "97.5%")
+    cutoff <- 0
   }
+  output$signif <- 0
+  output$signif[(output$`2.5%` < cutoff) & (output$`97.5` < cutoff)] <- 1
+  output$signif[(output$`2.5%` > cutoff) & (output$`97.5` > cutoff)] <- 1
   print(paste0("Number of observations: ", nobs(fit)))
   print(output)
 }
-set.seed(1)
+set.seed(111)
 # OBESITY
 fit_ob1 <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + education_c + 
                         smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
                       family = binomial, adapt_delta = 0.999) 
 get_output(fit_ob1)
 
+# with interaction
+set.seed(112)
+fit_ob1_int <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + education_c + 
+                            smoking_c + exercise + ncd + latent_class:gender + 
+                            latent_class:ncd + (1|region_c), data = tuvalu4, 
+                          family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob1_int)
+
+# with more interactions
+
 # MORBID OBESITY
+set.seed(121)
 fit_ob3 <- stan_glmer(obesity_3 ~ latent_class + gender + age_center + education_c + 
                       smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
                       family = binomial, adapt_delta = 0.999) 
 get_output(fit_ob3)
 
+set.seed(122)
+fit_ob3_int <- stan_glmer(obesity_3 ~ latent_class + gender + age_center + education_c + 
+                        smoking_c + exercise + ncd + latent_class:gender + 
+                          latent_class:ncd + (1|region_c), data = tuvalu4, 
+                        family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob3_int)
+
 # WEIGHT (adding height as a variable)
+set.seed(131)
 fit_wt <- stan_glmer(`Weight (kg)` ~ latent_class + gender + age_center + education_c + 
                        smoking_c + exercise + ncd + height_center + (1|region_c), 
                      data = tuvalu4, adapt_delta = 0.999)  
 get_output(fit_wt, exponentiate = FALSE)
 
+set.seed(132)
+fit_wt_int <- stan_glmer(`Weight (kg)` ~ latent_class + gender + age_center + education_c + 
+                       smoking_c + exercise + ncd + height_center + latent_class:gender + 
+                         latent_class:ncd + (1|region_c), 
+                     data = tuvalu4, adapt_delta = 0.999)  
+get_output(fit_wt_int, exponentiate = FALSE)
+
+save(fit_ob1, fit_ob1_int, fit_ob3, fit_ob3_int, fit_wt, fit_wt_int,
+     file = "all_models.RData")
+
+#=================== Create table of regression results ========================
+load("all_models.RData")
+
+obesity <- format(round(get_output(fit_ob1, exponentiate = TRUE), 3), nsmall = 2)
+obesity$signif <- as.integer(obesity$signif)
+morbid_obesity <- format(round(get_output(fit_ob3, exponentiate = TRUE), 3), nsmall = 2)
+morbid_obesity$signif <- as.integer(morbid_obesity$signif)
+weight <- format(round(get_output(fit_wt, exponentiate = FALSE), 3), nsmall = 2)
+weight$signif <- as.integer(weight$signif)
+regr_df <- as.data.frame(matrix(NA, nrow = 12, ncol = 7))
+regr_df[, 7] <- c("Intercept", "Neo-Local", "Mixed-Imported", "Imported",
+                       "Sex = F", "Age (Centered)", "Education >HS", 
+                       "Smoking = Yes", "Exercise = Med", "Exercise = Low", 
+                       "NCD = Yes", "Height (Centered)")
+regr_df[1:11, 1:2] <- cbind(obesity[1:11, 1], 
+                        apply(obesity[1:11, ], 1, 
+                              function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[1:11, 3:4] <- cbind(morbid_obesity[1:11, 1], 
+                        apply(morbid_obesity[1:11, ], 1, 
+                              function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[1:12, 5:6] <- cbind(weight[1:12, 1], 
+                        apply(weight[1:12, ], 1, 
+                              function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df %>% gt(rowname_col = "V7") %>%
+  tab_header(title = "Table 2: Association between dietary patterns and obesity, morbid obesity, and weight") %>%
+  tab_stubhead(label = "Covariate") %>%
+  tab_spanner(
+    label = "Obesity (BMI >= 30)",
+    columns = c(V1, V2)
+  ) %>% 
+  tab_spanner(
+    label = "Morbid Obesity (BMI >= 40)",
+    columns = c(V3, V4)
+  ) %>% 
+  tab_spanner(
+    label = "Weight",
+    columns = c(V5, V6)
+  ) %>%
+  tab_options(  # header color
+    stub.border.width = px(2),
+    column_labels.background.color = "#edf8fb"
+  ) %>%
+  tab_style(  # bold signif obesity 
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V1, V2),
+      rows = which(obesity$signif == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V3, V4),
+      rows = which(morbid_obesity$signif == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V5, V6),
+      rows = which(weight$signif == 1)
+    )
+  )  %>%
+  tab_style(  # highlight pattern rownames
+    style = cell_fill(color = "#ffffcc"),
+    locations = cells_stub(
+      rows = c(2,3,4)
+    )
+  ) %>%
+  cols_label(
+    V1 = "Post OR",
+    V2 = "95% Cred Int",
+    V3 = "Post OR",
+    V4 = "95% Cred Int",
+    V5 = "Post Mean",
+    V6 = "95% Cred Int")
+
+# Check R2
+rsq_ob1 <- bayes_R2(fit_ob1)
+rsq_ob3 <- bayes_R2(fit_ob3)
+rsq_wt <- bayes_R2(fit_wt)
+median(rsq_ob1)
+median(rsq_ob3)
+median(rsq_wt)
+loo_ob1 <- loo_R2(fit_ob1)
+median(loo_R2(fit_ob1))
+median(loo_R2(fit_ob1_int))
 
 # WAIST CIRCUMFERENCE
 fit_wc <- stan_glmer(wc ~ latent_class + gender + age_center + education_c + 
@@ -715,80 +876,169 @@ fit_wc <- stan_glmer(wc ~ latent_class + gender + age_center + education_c +
 summary(fit_wc)
 posterior_interval(fit_wc, prob = 0.95)
 
+means_int_wt <- tapply(tuvalu4$`Weight (kg)`, INDEX=list(tuvalu4$latent_class,
+                                                         tuvalu4$ncd), 
+                       function(x) {mean(x, na.rm = TRUE)})
+bar3d.ade(means_int_wt)
 #================= Stratified analyses =========================================
 # OBESITY
 fit_ob1 <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + education_c + 
                         smoking_c + exercise + ncd + (1|region_c), data = tuvalu4, 
                       family = binomial, adapt_delta = 0.99) 
-get_output(fit_ob1)
+# get_output(fit_ob1)
 
 ### Gender
+set.seed(111)
 fit_ob1_m <- stan_glmer(obesity_1 ~ latent_class + age_center + education_c + 
                           smoking_c + exercise + ncd + (1|region_c), 
                         data = tuvalu4[tuvalu4$gender == 1, ], 
                         family = binomial, adapt_delta = 0.999) 
+set.seed(112)
 fit_ob1_f <- stan_glmer(obesity_1 ~ latent_class + age_center + education_c + 
                           smoking_c + exercise + ncd + (1|region_c), 
                         data = tuvalu4[tuvalu4$gender == 2, ], 
                         family = binomial, adapt_delta = 0.999) 
-get_output(fit_ob1_m)
-get_output(fit_ob1_f)
+# get_output(fit_ob1_m)
+# get_output(fit_ob1_f)
 
 ### Education
+set.seed(211)
 fit_ob1_more_hs <- stan_glmer(obesity_1 ~ latent_class + gender + age_center +  
                           smoking_c + exercise + ncd + (1|region_c), 
                         data = tuvalu4[tuvalu4$education_c == 1, ], 
                         family = binomial, adapt_delta = 0.999) 
+set.seed(212)
 fit_ob1_hs <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
                           smoking_c + exercise + ncd + (1|region_c), 
                         data = tuvalu4[tuvalu4$education_c == 0, ], 
                         family = binomial, adapt_delta = 0.999) 
-get_output(fit_ob1_more_hs)
-get_output(fit_ob1_hs)
+# get_output(fit_ob1_more_hs)
+# get_output(fit_ob1_hs)
 
 ### Smoking
+set.seed(311)
 fit_ob1_smoke <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
                           education_c + exercise + ncd + (1|region_c), 
                         data = tuvalu4[tuvalu4$smoking_c == 1, ], 
                         family = binomial, adapt_delta = 0.999) 
+set.seed(312)
 fit_ob1_no_smoke <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
                                  education_c + exercise + ncd + (1|region_c), 
                         data = tuvalu4[tuvalu4$smoking_c == 0, ], 
                         family = binomial, adapt_delta = 0.999) 
-get_output(fit_ob1_smoke)
-get_output(fit_ob1_no_smoke)
+# get_output(fit_ob1_smoke)
+# get_output(fit_ob1_no_smoke)
 
 ### NCD
+set.seed(411)
 fit_ob1_ncd <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
                               education_c + smoking_c + exercise + (1|region_c), 
                             data = tuvalu4[tuvalu4$ncd == 1, ], 
                             family = binomial, adapt_delta = 0.999) 
+set.seed(412)
 fit_ob1_no_ncd <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
                                education_c + smoking_c + exercise + (1|region_c), 
                              data = tuvalu4[tuvalu4$ncd == 0, ], 
                              family = binomial, adapt_delta = 0.999) 
-get_output(fit_ob1_ncd)
-get_output(fit_ob1_no_ncd)
+# get_output(fit_ob1_ncd)
+# get_output(fit_ob1_no_ncd)
 
 ### Exercise
+set.seed(511)
 fit_ob1_exer_h <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
                           education_c + smoking_c + ncd + (1|region_c), 
                         data = tuvalu4[tuvalu4$exercise == 1, ], 
                         family = binomial, adapt_delta = 0.999) 
+set.seed(512)
 fit_ob1_exer_m <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
                                education_c + smoking_c + ncd + (1|region_c), 
                              data = tuvalu4[tuvalu4$exercise == 2, ], 
                              family = binomial, adapt_delta = 0.999) 
+set.seed(513)
 fit_ob1_exer_l <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + 
                                education_c + smoking_c + ncd + (1|region_c), 
                              data = tuvalu4[tuvalu4$exercise == 3, ], 
                              family = binomial, adapt_delta = 0.999) 
-get_output(fit_ob1_exer_h)
-get_output(fit_ob1_exer_m)
-get_output(fit_ob1_exer_l)
+save(fit_ob1_f, fit_ob1_m, fit_ob1_hs, fit_ob1_more_hs, fit_ob1_smoke, 
+     fit_ob1_no_smoke, fit_ob1_ncd, fit_ob1_no_ncd, fit_ob1_exer_h,
+     fit_ob1_exer_m, fit_ob1_exer_l, file = "ob1_strat_models.RData")
 
+#=================== Create table of stratified results ========================
+outputs <- lapply(list(fit_ob1_f, fit_ob1_m, fit_ob1_hs, fit_ob1_more_hs, 
+                       fit_ob1_no_smoke, fit_ob1_smoke, 
+                       fit_ob1_no_ncd, fit_ob1_ncd, fit_ob1_exer_h,
+                       fit_ob1_exer_m, fit_ob1_exer_l),
+                  function(x) format(round(get_output(x), 3), nsmall = 2))
 
+get_strat_est <- function(fit, i) {
+  return(c(nobs(fit), sum(fit$y == 1), "1 ref", 
+           paste0(outputs[[i]][2,1], " [", outputs[[i]][2, 2], ", ",
+                  outputs[[i]][2,3], "]"),
+           paste0(outputs[[i]][3,1], " [", outputs[[i]][3, 2], ", ",
+                  outputs[[i]][3,3], "]"),
+           paste0(outputs[[i]][4,1], " [", outputs[[i]][4, 2], ", ",
+                  outputs[[i]][4,3], "]")))
+}
+strat_df <- as.data.frame(matrix(NA, nrow = 11, ncol = 7))
+strat_df[, 7] <- c("Male", "Female", "<=High School", ">High School", 
+                  "Non-Smokers", "Current Smokers", "No NCD Reported", 
+                  "NCD Reported", "Exercise High", "Exercise Medium",
+                  "Exercise Low")
+strat_df[1, -7] <- get_strat_est(fit_ob1_f, 1)
+strat_df[2, -7] <- get_strat_est(fit_ob1_m, 2)
+strat_df[3, -7] <- get_strat_est(fit_ob1_hs, 3)
+strat_df[4, -7] <- get_strat_est(fit_ob1_more_hs, 4)
+strat_df[5, -7] <- get_strat_est(fit_ob1_no_smoke, 5)
+strat_df[6, -7] <- get_strat_est(fit_ob1_smoke, 6)
+strat_df[7, -7] <- get_strat_est(fit_ob1_no_ncd, 7)
+strat_df[8, -7] <- get_strat_est(fit_ob1_ncd, 8)
+strat_df[9, -7] <- get_strat_est(fit_ob1_exer_h, 9)
+strat_df[10, -7] <- get_strat_est(fit_ob1_exer_m, 10)
+strat_df[11, -7] <- get_strat_est(fit_ob1_exer_l, 11)
 
+strat_df %>% gt(rowname_col = "V7") %>%
+  tab_header(title = "Table 3: Subgroup analyses of the association between dietary patterns and obesity") %>%
+  tab_stubhead(label = "Covariate") %>%
+  tab_spanner(
+    label = "Posterior OR estimate (95% credible interval)",
+    columns = c(V3, V4, V5, V6)
+  ) %>% 
+  tab_options(  # header color
+    stub.border.width = px(2),
+    column_labels.background.color = "#edf8fb",
+    row_group.background.color = "#feebe2"
+  )  %>%
+  cols_label(
+    V1 = "N",
+    V2 = "Cases",
+    V3 = "Mixed-Local",
+    V4 = "Neo-Local",
+    V5 = "Mixed-Imported",
+    V6 = "Imported") %>%
+  tab_row_group(
+    label = "Exercise",
+    rows = c(9, 10, 11)
+  ) %>%
+  tab_row_group(
+    label = "Reported NCD Status",
+    rows = c(7, 8)
+  ) %>%
+  tab_row_group(
+    label = "Smoking Status",
+    rows = c(5, 6)
+  ) %>%
+  tab_row_group(
+    label = "Education",
+    rows = c(3, 4)
+  ) %>%
+  tab_row_group(
+    label = "Sex",
+    rows = c(1, 2)
+  )
+
+# get_output(fit_ob1_exer_h)
+# get_output(fit_ob1_exer_m)
+# get_output(fit_ob1_exer_l)
 
 # MORBID OBESITY
 fit_ob3 <- stan_glmer(obesity_3 ~ latent_class + gender + age_center + education_c + 
