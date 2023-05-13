@@ -284,6 +284,78 @@ corrplot(a, tl.pos='l')
 
 
 #================= Dietary pattern analysis ===================================
+
+### HELPER FUNCTIONS
+# function to obtain ABIC for a model
+abic <- function(llik, N, npar) {
+  return( (-2*llik) + ((log((N + 2) / 24)) * npar) )
+}
+# Obtain CAIC for a model
+caic <- function(llik, N, npar) {
+  return( (-2*llik) + npar * (1 + log(N)) )
+}
+# Calculate entropy. Closer to 1 indicates better class separation
+entropy <- function(p) {
+  plogp <- - p * log(p)
+  plogp[is.na(plogp)] <- 0  # the limit of plogp is 0 by L'Hopital's
+  return(sum(plogp))
+}
+entropy_R2 <- function(model) {
+  error_prior <- entropy(model$P)
+  error_post <- mean(apply(model$posterior, 1, entropy))
+  return((error_prior - error_post) / error_prior)
+}
+# Calculate average max class membership probability across individuals
+class_prob <- function(model) {
+  return( mean(apply(model$posterior, 1, max)) )
+}
+
+# Plot probabilities of the consumption levels for each pattern
+plot_pattern_probs <- function(model) {
+  lcmodel <- reshape2::melt(model$probs, level=2)
+  lcmodel %>%
+    ggplot(aes(x = L2, y = value, fill = Var2)) + 
+    geom_bar(stat = "identity", position = "stack") + 
+    facet_grid(Var1 ~ .) + 
+    scale_fill_brewer(type="seq", palette="Greys") + 
+    theme_bw() + 
+    labs(x = "Food items",y="Item consumption probabilities", 
+         fill ="Item \nconsumption \nprobabilities") + 
+    theme( axis.text.y=element_text(size=7),
+           #axis.ticks.y=element_blank(),   
+           panel.grid.major.y=element_blank(),
+           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+}
+
+# Plot modal consumption levels for each pattern
+plot_pattern_modes <- function(model, names_list = NULL) {
+  est_item_probs <- model$probs
+  mode_item_probs <- lapply(est_item_probs, function(x) apply(x, 1, which.max))
+  mode_item_probs <- as.data.frame(do.call("rbind", mode_item_probs))
+  if (is.null(names_list)) {
+    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs), 
+                                           levels=rownames(mode_item_probs)))
+  } else {
+    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs),
+                                           levels=names_list))
+  }
+  colnames(mode_item_probs) <- c("Neo-Local", "Mixed-Local", "Mixed-Imported", 
+                                 "Imported", "Item")
+  mode_plot <- mode_item_probs %>% gather("Pattern", "Level", -Item) 
+  mode_plot$Pattern <- fct_rev(factor(mode_plot$Pattern, levels = 
+                                      c("Imported", "Mixed-Imported",  
+                                        "Mixed-Local", "Neo-Local")))
+  mode_plot %>% ggplot(aes(x=Pattern, y=Item, fill=Level)) + 
+    geom_tile(color="black") + 
+    geom_text(aes(label = Level), col="white", cex=2) +
+    scale_fill_gradient(trans="reverse") + 
+    theme(legend.position="none") + 
+    scale_x_discrete(labels = c("Neo-\nLocal", "Mixed-\nLocal",
+                                "Mixed-\nImported", "Imported"))
+}
+
+#########
+
 tuv_diet <- tuvalu2 %>% dplyr::select(c(`Participant No.`, all_of(food_names)))
 names(tuv_diet) <- c("Participant", "Rice", "Taro", "Breadfruit", "Fish", "Pork", "Cabbage", 
                      "Bird_nest_fern", "Banana", "Coconut", "Imp_fruits", "Eggs",
@@ -318,30 +390,6 @@ lc10<-poLCA(f, data=tuv_diet_compl, nclass=10, na.rm = FALSE, nrep=30, maxiter=3
 
 
 ### Model diagnostics table
-# function to obtain ABIC for a model
-abic <- function(llik, N, npar) {
-  return( (-2*llik) + ((log((N + 2) / 24)) * npar) )
-}
-# Obtain CAIC for a model
-caic <- function(llik, N, npar) {
-  return( (-2*llik) + npar * (1 + log(N)) )
-}
-# Calculate entropy. Closer to 1 indicates better class separation
-entropy <- function(p) {
-  plogp <- - p * log(p)
-  plogp[is.na(plogp)] <- 0  # the limit of plogp is 0 by L'Hopital's
-  return(sum(plogp))
-}
-entropy_R2 <- function(model) {
-  error_prior <- entropy(model$P)
-  error_post <- mean(apply(model$posterior, 1, entropy))
-  return((error_prior - error_post) / error_prior)
-}
-# Calculate average max class membership probability across individuals
-class_prob <- function(model) {
-  return( mean(apply(model$posterior, 1, max)) )
-}
-
 # combining results to a dataframe
 Model <- 1:10
 BIC <- c(lc1$bic, lc2$bic, lc3$bic, lc4$bic, lc5$bic, lc6$bic, lc7$bic, lc8$bic, 
@@ -406,66 +454,35 @@ lrt(lc9, lc10)
 # Standard output of conditional item response probablities
 lc4
 
-plot_pattern_probs <- function(model) {
-  lcmodel <- reshape2::melt(model$probs, level=2)
-  lcmodel %>%
-    ggplot(aes(x = L2, y = value, fill = Var2)) + 
-    geom_bar(stat = "identity", position = "stack") + 
-    facet_grid(Var1 ~ .) + 
-    scale_fill_brewer(type="seq", palette="Greys") + 
-    theme_bw() + 
-    labs(x = "Food items",y="Item consumption probabilities", 
-         fill ="Item \nconsumption \nprobabilities") + 
-    theme( axis.text.y=element_text(size=7),
-           #axis.ticks.y=element_blank(),   
-           panel.grid.major.y=element_blank(),
-           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-}
 plot_pattern_probs(lc4)
 plot_pattern_probs(lc5)
 plot_pattern_probs(lc6)
 plot_pattern_probs(lc7)
-
-plot_pattern_modes <- function(model, names_list = NULL) {
-  est_item_probs <- model$probs
-  mode_item_probs <- lapply(est_item_probs, function(x) apply(x, 1, which.max))
-  mode_item_probs <- as.data.frame(do.call("rbind", mode_item_probs))
-  if (is.null(names_list)) {
-    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs), 
-                                           levels=rownames(mode_item_probs)))
-  } else {
-    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs),
-                                           levels=names_list))
-  }
-  mode_plot <- mode_item_probs %>% gather("Class", "Level", -Item) 
-  mode_plot %>% ggplot(aes(x=Class, y=Item, fill=Level)) + 
-    geom_tile(color="black") + 
-    geom_text(aes(label = Level), col="white", cex=2) +
-    scale_fill_gradient(trans="reverse") + 
-    theme(legend.position="none")
-}
 
 plot_pattern_modes(lc4)
 plot_pattern_modes(lc5)
 plot_pattern_modes(lc6)
 plot_pattern_modes(lc7)
 
-#============================ proceeding with 4 patterns =======================
+#============================ Proceeding with 4 patterns =======================
 set.seed(3)
 tuv_diet_compl <- read.csv("diet_pattern_data.csv")
 # formula for basic LCA
 f <- as.formula(paste0("cbind(", paste0(names(tuv_diet_compl), collapse=", "), ")~1") )
 lc4<-poLCA(f, data=tuv_diet_compl, nclass=4, na.rm = FALSE, nrep=30, 
            maxiter=3000, verbose=FALSE)
+# save(lc4, file = "lc4.RData")
+
+load("lc4.RData")
 names_by_local <- c("Cassava", "Taro", "Breadfruit", "Cabbage", "Bird_nest_fern", 
                     "Banana", "Coconut", "Papaya", "Pandanus", "Cucumber", "Fish",
-                    "Rice", "Potatoes", "Imp_fruits", "Imp_vegs", "Chicken", 
-                    "Lamb_beef", "Eggs", "Milk", "Pork", "Sweetened_bevs", 
+                    "Pork", "Rice", "Potatoes", "Imp_fruits", "Imp_vegs", 
+                    "Chicken", "Lamb_beef", "Eggs", "Milk", "Sweetened_bevs", 
                     "Ice_cream", "Instant_noodles", "Chips_biscuits", "Cake") 
 names_by_group <- c("Cassava", "Taro", "Rice", "Potatoes", 
                     "Breadfruit", "Cabbage", "Bird_nest_fern", "Banana", "Coconut", 
                     "Papaya", "Pandanus", "Cucumber", "Imp_fruits", "Imp_vegs", 
-                    "Fish", "Chicken", "Lamb_beef", "Pork", 
+                    "Fish", "Pork", "Chicken", "Lamb_beef", 
                     "Eggs", "Milk", 
                     "Sweetened_bevs", "Ice_cream", "Instant_noodles",
                     "Chips_biscuits", "Cake") 
@@ -483,14 +500,19 @@ modal_probs <- apply(post_probs, 1, max)
 summary(modal_probs)  ## low misclassification error
 sort(modal_probs)[1:50]  ## lowest confidence predictions
 
-#================= Examine variables ===========================================
+#================= Exploratory pattern analysis=================================
+
 tuvalu4 <- tuvalu2[!(tuvalu2$`Participant No.` %in% diet_na_inds), ]
 indiv_class <- lc4$predclass
-tuvalu4$latent_class <- factor(indiv_class, levels=c(2, 1, 3, 4))
+tuvalu4$latent_class <- factor(indiv_class, levels=c(2, 1, 3, 4),
+                               labels = c("Mixed-Local", "Neo-Local", 
+                                          "Mixed-Imported", "Imported"))
 tuvalu4$obesity_1 <- factor(tuvalu4$obesity_1, levels=c(0,1))
 tuvalu4$obesity_3 <- factor(tuvalu4$obesity_3, levels=c(0,1))
 tuvalu4$age_center <- tuvalu4$age - mean(tuvalu4$age, na.rm = TRUE)
-tuvalu4$Pattern <- factor(indiv_class, levels = c(1,2,3,4))
+tuvalu4$Pattern <- factor(indiv_class, levels = c(1,2,3,4), 
+                          labels = c("Neo-Local", "Mixed-Local", 
+                                     "Mixed-Imported", "Imported"))
 tuvalu4$height_center <- tuvalu4$`Height (cm)` - mean(tuvalu4$`Height (cm)`, 
                                                       na.rm = TRUE)
 # Save data for analysis
@@ -564,42 +586,31 @@ ggarrange(g1, g2, g3, g4, g5, g6, g7, nrow = 2, ncol = 4, common.legend = TRUE,
           legend = "bottom")
 
 #================= Demographic cross tabulations ===============================
-tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
 
-table(tuvalu4$obesity_1)
-table(tuvalu4$obesity_3)
-hist(tuvalu4$wc, breaks= 20)
-
-## Alternative single-variable cross-tabulation table and plot
-# tab_xtab(var.row = tuvalu4$region_c, var.col = tuvalu4$latent_class, 
-#          title = "Demographic Cross-Tabulation", show.row.prc = TRUE)
-# plot_xtab(tuvalu4$region_c, tuvalu4$latent_class, 
-#           margin = "row", bar.pos = "stack", coord.flip = TRUE)
-
-
+### HELPER FUNCTIONS
 # 'create_demog_table' creates a table of demographic characteristics using 
 # only the data in the specified dataset(s)
 # Input: dataset, column_names, row_names
 # Output: word document including formatted demographic table 
 create_demog_table <- function(dataset, column_names, row_names) {
   # Create table of demographic comparisons stratified by malaria status
-  lc_demog <- CreateTableOne(vars = c("gender", "age", "age_c", "education_c", 
-                                      "region_c",
-                                      "ncd", "smoking_c", "income", "exercise"),
-                                  factorVars = c("gender", "age_c", "education_c", 
-                                                 "region_c",
-                                                 "ncd", "smoking_c", "exercise"),
-                                  strata = "latent_class", addOverall = T,
-                                  data = dataset)
+  lc_demog <- CreateTableOne(vars = c("region_c", "gender", "age", "age_c", 
+                                      "education_c", "ncd", "smoking_c", 
+                                      "exercise"),
+                             factorVars = c("region_c", "gender", "age_c", 
+                                            "education_c", "ncd", 
+                                            "smoking_c", "exercise"),
+                             strata = "latent_class", addOverall = T,
+                             data = dataset)
   lc_demog_tab <- print(lc_demog, noSpaces = TRUE, nonnormal = c("age", "income"))
   #lc_demog_tab <- print(lc_demog, noSpaces = TRUE)
   
   lc_demog_tab <- as.data.frame(lc_demog_tab)[, c(2:5, 1, 6)]
   colnames(lc_demog_tab) <- column_names
   rownames(lc_demog_tab) <- row_names
-        # lc_demog_tab <- print(lc_demog, noSpaces = TRUE, showAllLevels = TRUE)
-        # lc_demog_tab <- lc_demog_tab[,1:7] 
-        # print(lc_demog_tab) %>% kbl %>% kable_paper("hover")
+  # lc_demog_tab <- print(lc_demog, noSpaces = TRUE, showAllLevels = TRUE)
+  # lc_demog_tab <- lc_demog_tab[,1:7] 
+  # print(lc_demog_tab) %>% kbl %>% kable_paper("hover")
   
   # Convert to table
   table <- flextable(lc_demog_tab %>% rownames_to_column("Demographic Variable"))
@@ -613,19 +624,8 @@ create_demog_table <- function(dataset, column_names, row_names) {
   #table_name <- paste0('Table_LC_Demog.docx')
   table_name <- paste0('Table_LC_Demographics_FINAL.docx')
   docx <- print(doc, target = table_name)
+  write.csv(lc_demog_tab, file = "df_table_1.csv")
 }
-
-create_demog_table(tuvalu4, 
-                   column_names = c("Neo-Local", "Mixed-Local", "Mixed-Imported", 
-                                    "Imported", "Overall", "P-value"),
-                   row_names = c("Sample Size", "Sex: Female (%)", 
-                                 "Median Age [IQR]", "Age",
-                                 "   (0, 30]", "   (30, 40]", "   (40, 50]", 
-                                 "   (50, 60]", "   (60, 70]", "   [70, Inf)",
-                                 "Education: >HS (%)",
-                                 "Region: Outlying (%)", "NCD: Reported (%)", 
-                                 "Smoking: Yes (%)", "Median Income [IQR]", 
-                                 "Exercise (%)", "   High", "   Medium", "   Low"))
 
 create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
                                   table_name) {
@@ -642,7 +642,7 @@ create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
   lc_demog_tab <- as.data.frame(lc_demog_tab)[, c(2:3, 1, 4)]
   colnames(lc_demog_tab) <- column_names
   rownames(lc_demog_tab) <- row_names
-
+  
   # Convert to table
   table <- flextable(lc_demog_tab %>% rownames_to_column("Feature"))
   table <- align(table, align = "left", part="all")
@@ -652,6 +652,41 @@ create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
   doc <- body_add_flextable(doc, value = table)
   docx <- print(doc, target = table_name)
 }
+
+######
+
+tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
+
+table(tuvalu4$obesity_1)
+table(tuvalu4$obesity_3)
+hist(tuvalu4$wc, breaks= 20)
+
+create_demog_table(tuvalu4 %>%
+                     mutate(region_c = factor(region_c, 
+                                              labels = c("Main", "Outlying"))), 
+                   column_names = c("Neo-Local", "Mixed-Local", "Mixed-Imported", 
+                                    "Imported", "Overall", "P-value"),
+                   row_names = c("Sample Size", "Region: Outlying (%)", 
+                                 "Sex: Female (%)", 
+                                 "Median Age [IQR]", "Age (%)",
+                                 "   (0, 30]", "   (30, 40]", "   (40, 50]", 
+                                 "   (50, 60]", "   (60, 70]", "   [70, Inf)",
+                                 "Education: >HS (%)",
+                                 "NCD: Reported (%)", 
+                                 "Smoking: Yes (%)", 
+                                 "Exercise (%)", "   High", "   Medium", "   Low"))
+
+## post-hoc pairwise comparisons
+# temp <- chisq.test(xtabs(~region_c+Pattern, data = tuvalu4), correct = FALSE)
+# library(chisq.posthoc.test)
+# temp2 <- chisq.posthoc.test(xtabs(~region_c+Pattern, data = tuvalu4), 
+#                             method = "bonferroni", correct = FALSE)
+
+## Alternative single-variable cross-tabulation table and plot
+# tab_xtab(var.row = tuvalu4$region_c, var.col = tuvalu4$latent_class, 
+#          title = "Demographic Cross-Tabulation", show.row.prc = TRUE)
+# plot_xtab(tuvalu4$region_c, tuvalu4$latent_class, 
+#           margin = "row", bar.pos = "stack", coord.flip = TRUE)
 
 outcome_row_names <- c("Sample size", "Sex: Female (%)", 
                        "Age (median [IQR])", "Education: > HS (%)",
@@ -701,13 +736,9 @@ create_outcomes_table(tuvalu4, strat_var = "obesity_3",
 #                    smoking_c + exercise + ncd + (1|region_c), data = tuvalu4)  
 # summary(fit_wc)
 
-### CHECK MORBID OBESITY CODING
 # ============ Fit using Bayesian hierarchical modeling ========================
-tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
-factor_cols <- c("region_c", "obesity_1", "obesity_3", "gender", "age_c", 
-                 "education_c", "income_c", "ncd", "marital", "smoking_c", 
-                 "alcohol_c", "latent_class", "Pattern", "exercise")
-tuvalu4 <- tuvalu4 %>% mutate_at(factor_cols, as.factor)
+
+### HELPER FUNCTIONS
 
 get_output <- function(fit, exponentiate = TRUE) {
   if (exponentiate) {
@@ -727,6 +758,39 @@ get_output <- function(fit, exponentiate = TRUE) {
   print(paste0("Number of observations: ", nobs(fit)))
   print(output)
 }
+
+# `get_prev` calculates the prevalences given a vector of coefficients from 
+# a logistic regression model, where the first value corresponds to the log-odds
+# in the reference group
+# Since odds = prev/(1-prev), prev = odds/(1+odds)
+get_prevs <- function(odds_coefs) {
+  prev <- numeric(length(odds_coefs))
+  prev[1] <- exp(odds_coefs[1]) / (1 + exp(odds_coefs[1]))
+  for (i in 2:length(odds_coefs)) {
+    # odds of level = OR * baseline_odds
+    odds_i <- exp(odds_coefs[i]) * exp(odds_coefs[1])
+    prev[i] <- odds_i / (1 + odds_i)
+  }
+  return(prev)
+}
+
+# From posterior samples, get posterior error probability (PEP) to control 
+# false discovery rate and S-type errors.
+# PEP is P(est <= 0) in this case because all the estimates are positive
+get_PEP <- function(fit, cols) {
+  post_samp <- as.data.frame(fit)
+  PEP <- apply(post_samp[, cols], 2, function(x) mean(x <= 0))
+  return(PEP)
+}
+
+###########
+
+tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
+factor_cols <- c("region_c", "obesity_1", "obesity_3", "gender", "age_c", 
+                 "education_c", "income_c", "ncd", "marital", "smoking_c", 
+                 "alcohol_c", "latent_class", "Pattern", "exercise")
+tuvalu4 <- tuvalu4 %>% mutate_at(factor_cols, as.factor)
+
 set.seed(111)
 # OBESITY
 fit_ob1 <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + education_c + 
@@ -775,15 +839,277 @@ get_output(fit_wt_int, exponentiate = FALSE)
 save(fit_ob1, fit_ob1_int, fit_ob3, fit_ob3_int, fit_wt, fit_wt_int,
      file = "all_models.RData")
 
+# temp <- tuvalu4 %>% drop_na(obesity_1, latent_class, gender, age_center, 
+#                             education_c, smoking_c, exercise, ncd, region_c,
+#                             height_center, obesity_3, `Weight..kg.`)
+# temp_ref <- temp[temp$latent_class == "Mixed-Local", ]
+# prop.table(table(temp_ref$obesity_1))
+# prop.table(table(temp_ref$obesity_3))
+# mean(temp_ref$Weight..kg.)
+
+
 #=================== Create table of regression results ========================
+
 load("all_models.RData")
 
 obesity <- format(round(get_output(fit_ob1, exponentiate = TRUE), 3), nsmall = 2)
 obesity$signif <- as.integer(obesity$signif)
+obesity$signif[1] <- 0  # get rid of significance for reference level
 morbid_obesity <- format(round(get_output(fit_ob3, exponentiate = TRUE), 3), nsmall = 2)
 morbid_obesity$signif <- as.integer(morbid_obesity$signif)
+morbid_obesity$signif[1] <- 0  # get rid of significance for reference level
 weight <- format(round(get_output(fit_wt, exponentiate = FALSE), 3), nsmall = 2)
 weight$signif <- as.integer(weight$signif)
+weight$signif[1] <- 0  # get rid of significance for reference level
+
+obesity_prev <- format(round(get_prevs(fit_ob1$coefficients[1:4]), 3), nsmall = 2)
+morbid_obesity_prev <- format(round(get_prevs(fit_ob3$coefficients[1:4]), 3), nsmall = 2)
+obesity_PEP <- format(round(get_PEP(fit_ob1, 2:4), 3), nsmall = 2)
+morbid_obesity_PEP <- format(round(get_PEP(fit_ob3, 2:4), 3), nsmall = 2)
+weight_PEP <- format(round(get_PEP(fit_wt, 1:4), 3), nsmall = 2)
+
+
+# Summary regression Table 2 OPTION 1 ==========================================
+regr_df <- as.data.frame(matrix(NA, nrow = 4, ncol = 9))
+regr_df[, 9] <- c("Mixed-Local (Ref)", "Neo-Local", "Mixed-Imported", "Imported")
+regr_df[, 1] <- obesity_prev
+regr_df[1, 2:3] <- c(1, NA)
+regr_df[2:4, 2:3] <- cbind(obesity[2:4, 1], 
+                            apply(obesity[2:4, ], 1, 
+                                  function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[, 4] <- morbid_obesity_prev
+regr_df[1, 5:6] <- c(1, NA)
+regr_df[2:4, 5:6] <- cbind(morbid_obesity[2:4, 1], 
+                            apply(morbid_obesity[2:4, ], 1, 
+                                  function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[1:4, 7:8] <- cbind(weight[1:4, 1], 
+                            apply(weight[1:4, ], 1, 
+                                  function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df %>% gt(rowname_col = "V9") %>%
+  tab_header(title = "Table 2: Association between dietary patterns and obesity, morbid obesity, and weight") %>%
+  tab_stubhead(label = "Pattern") %>%
+  tab_spanner(
+    label = "Obesity (BMI >= 30)",
+    columns = c(V1, V2, V3)
+  ) %>% 
+  tab_spanner(
+    label = "Morbid Obesity (BMI >= 40)",
+    columns = c(V4, V5, V6)
+  ) %>% 
+  tab_spanner(
+    label = "Weight (kg)",
+    columns = c(V7, V8)
+  ) %>%
+  tab_options(  # header color
+    stub.border.width = px(2),
+    column_labels.background.color = "#edf8fb"
+  ) %>%
+  sub_missing() %>%
+  cols_align(
+    align = "left"
+  ) %>%
+  tab_style(  # bold signif obesity 
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V2, V3),
+      rows = which(obesity$signif[1:4] == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V5, V6),
+      rows = which(morbid_obesity$signif[1:4] == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V7, V8),
+      rows = which(weight$signif[1:4] == 1)
+    )
+  )  %>%
+  cols_label(
+    V1 = "Post Prev",
+    V2 = "Post OR",
+    V3 = "95% Cred Int",
+    V4 = "Post Prev",
+    V5 = "Post OR",
+    V6 = "95% Cred Int",
+    V7 = "Post Mean",
+    V8 = "95% Cred Int")
+df_table_2 <- regr_df[-9]
+rownames(df_table_2) <- regr_df[, 9]
+colnames(df_table_2) <- c("Post Prev Ob", "Post OR Ob", "95% Cred Int Ob", 
+                          "Post Prev MOb", "Post OR MOb", "95% Cred Int MOb", 
+                          "Post Mean Wt", "95% Cred Int Wt")
+write.csv(df_table_2, "df_table_2.csv")
+
+
+# Summary regression Table 2 OPTION 2 WITH PEP =================================
+regr_df <- as.data.frame(matrix(NA, nrow = 4, ncol = 12))
+regr_df[, 12] <- c("Mixed-Local (Ref)", "Neo-Local", "Mixed-Imported", "Imported")
+regr_df[, 1] <- obesity_prev
+regr_df[1, 2:4] <- c(1, NA, NA)
+regr_df[2:4, 2:3] <- cbind(obesity[2:4, 1], 
+                           apply(obesity[2:4, ], 1, 
+                                 function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[2:4, 4] <- obesity_PEP
+regr_df[, 5] <- morbid_obesity_prev
+regr_df[1, 6:8] <- c(1, NA, NA)
+regr_df[2:4, 6:7] <- cbind(morbid_obesity[2:4, 1], 
+                           apply(morbid_obesity[2:4, ], 1, 
+                                 function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[2:4, 8] <- morbid_obesity_PEP
+regr_df[1:4, 9:10] <- cbind(weight[1:4, 1], 
+                            apply(weight[1:4, ], 1, 
+                                  function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[, 11] <- weight_PEP
+regr_df %>% gt(rowname_col = "V12") %>%
+  tab_header(title = "Table 2: Association between dietary patterns and obesity, morbid obesity, and weight") %>%
+  tab_stubhead(label = "Pattern") %>%
+  tab_spanner(
+    label = "Obesity (BMI >= 30)",
+    columns = c(V1, V2, V3, V4)
+  ) %>% 
+  tab_spanner(
+    label = "Morbid Obesity (BMI >= 40)",
+    columns = c(V5, V6, V7, V8)
+  ) %>% 
+  tab_spanner(
+    label = "Weight (kg)",
+    columns = c(V9, V10, V11)
+  ) %>%
+  tab_options(  # header color
+    stub.border.width = px(2),
+    column_labels.background.color = "#edf8fb"
+  ) %>%
+  sub_missing() %>%
+  cols_align(
+    align = "left"
+  ) %>%
+  tab_style(  # bold signif obesity 
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V2, V3, V4),
+      rows = which(obesity$signif[1:4] == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V6, V7, V8),
+      rows = which(morbid_obesity$signif[1:4] == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V9, V10, V11),
+      rows = which(weight$signif[1:4] == 1)
+    )
+  )  %>%
+  cols_label(
+    V1 = "Post Prev",
+    V2 = "Post OR",
+    V3 = "95% Cred Int",
+    V4 = "P(OR <= 1)",
+    V5 = "Post Prev",
+    V6 = "Post OR",
+    V7 = "95% Cred Int",
+    V8 = "P(OR <= 1)",
+    V9 = "Post Mean",
+    V10 = "95% Cred Int",
+    V11 = "P(Mean <= 0)")
+df_table_2 <- regr_df[-12]
+rownames(df_table_2) <- regr_df[, 12]
+colnames(df_table_2) <- c("Post Prev Ob", "Post OR Ob", "95% Cred Int Ob", "PEP Ob",
+                          "Post Prev MOb", "Post OR MOb", "95% Cred Int MOb", "PEP MOb", 
+                          "Post Mean Wt", "95% Cred Int Wt", "PEP Wt")
+write.csv(df_table_2, "df_table_2_withPEP.csv")
+
+
+
+# Summary regression Table 2 OPTION 3 ==========================================
+regr_df <- as.data.frame(matrix(NA, nrow = 4, ncol = 7))
+regr_df[, 7] <- c("Mixed-Local (Ref)", "Neo-Local", "Mixed-Imported", "Imported")
+regr_df[1:4, 1:2] <- cbind(obesity[1:4, 1], 
+                            apply(obesity[1:4, ], 1, 
+                                  function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[1:4, 3:4] <- cbind(morbid_obesity[1:4, 1], 
+                            apply(morbid_obesity[1:4, ], 1, 
+                                  function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[1:4, 5:6] <- cbind(weight[1:4, 1], 
+                            apply(weight[1:4, ], 1, 
+                                  function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df %>% gt(rowname_col = "V7") %>%
+  tab_header(title = "Table 2: Association between dietary patterns and obesity, morbid obesity, and weight") %>%
+  tab_stubhead(label = "Pattern") %>%
+  tab_spanner(
+    label = "Obesity (BMI >= 30)",
+    columns = c(V1, V2)
+  ) %>% 
+  tab_spanner(
+    label = "Morbid Obesity (BMI >= 40)",
+    columns = c(V3, V4)
+  ) %>% 
+  tab_spanner(
+    label = "Weight (kg)",
+    columns = c(V5, V6)
+  ) %>%
+  tab_options(  # header color
+    stub.border.width = px(2),
+    column_labels.background.color = "#edf8fb"
+  ) %>%
+  tab_style(  # bold signif obesity 
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V1, V2),
+      rows = which(obesity$signif[1:4] == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V3, V4),
+      rows = which(morbid_obesity$signif[1:4] == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V5, V6),
+      rows = which(weight$signif[1:4] == 1)
+    )
+  )  %>%
+  cols_label(
+    V1 = "Post Est",
+    V2 = "95% Cred Int",
+    V3 = "Post Est",
+    V4 = "95% Cred Int",
+    V5 = "Post Est",
+    V6 = "95% Cred Int")
+
+
+# Full regression table ========================================================
 regr_df <- as.data.frame(matrix(NA, nrow = 12, ncol = 7))
 regr_df[, 7] <- c("Intercept", "Neo-Local", "Mixed-Imported", "Imported",
                        "Sex = F", "Age (Centered)", "Education >HS", 
@@ -851,12 +1177,19 @@ regr_df %>% gt(rowname_col = "V7") %>%
     )
   ) %>%
   cols_label(
-    V1 = "Post OR",
+    V1 = "Post Odds or OR",
     V2 = "95% Cred Int",
-    V3 = "Post OR",
+    V3 = "Post Odds or OR",
     V4 = "95% Cred Int",
     V5 = "Post Mean",
-    V6 = "95% Cred Int")
+    V6 = "95% Cred Int") %>%
+
+df_table_2_full <- regr_df[-7]
+rownames(df_table_2_full) <- regr_df[, 7]
+colnames(df_table_2_full) <- c("Post Odds or OR Ob", "95% Cred Int Ob", 
+                          "Post Odds or OR MOb", "95% Cred Int MOb", 
+                          "Post Mean Wt", "95% Cred Int Wt")
+write.csv(df_table_2_full, "df_table_2_full.csv")
 
 # Check R2
 rsq_ob1 <- bayes_R2(fit_ob1)
@@ -880,6 +1213,7 @@ means_int_wt <- tapply(tuvalu4$`Weight (kg)`, INDEX=list(tuvalu4$latent_class,
                                                          tuvalu4$ncd), 
                        function(x) {mean(x, na.rm = TRUE)})
 bar3d.ade(means_int_wt)
+
 #================= Stratified analyses =========================================
 # OBESITY
 fit_ob1 <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + education_c + 
@@ -964,11 +1298,8 @@ save(fit_ob1_f, fit_ob1_m, fit_ob1_hs, fit_ob1_more_hs, fit_ob1_smoke,
      fit_ob1_exer_m, fit_ob1_exer_l, file = "ob1_strat_models.RData")
 
 #=================== Create table of stratified results ========================
-outputs <- lapply(list(fit_ob1_f, fit_ob1_m, fit_ob1_hs, fit_ob1_more_hs, 
-                       fit_ob1_no_smoke, fit_ob1_smoke, 
-                       fit_ob1_no_ncd, fit_ob1_ncd, fit_ob1_exer_h,
-                       fit_ob1_exer_m, fit_ob1_exer_l),
-                  function(x) format(round(get_output(x), 3), nsmall = 2))
+
+### HELPER FUNCTIONS
 
 get_strat_est <- function(fit, i) {
   return(c(nobs(fit), sum(fit$y == 1), "1 ref", 
@@ -979,11 +1310,21 @@ get_strat_est <- function(fit, i) {
            paste0(outputs[[i]][4,1], " [", outputs[[i]][4, 2], ", ",
                   outputs[[i]][4,3], "]")))
 }
+
+#############
+load("ob1_strat_models.RData")
+
+outputs <- lapply(list(fit_ob1_f, fit_ob1_m, fit_ob1_hs, fit_ob1_more_hs, 
+                       fit_ob1_no_smoke, fit_ob1_smoke, 
+                       fit_ob1_no_ncd, fit_ob1_ncd, fit_ob1_exer_h,
+                       fit_ob1_exer_m, fit_ob1_exer_l),
+                  function(x) format(round(get_output(x), 3), nsmall = 2))
+
 strat_df <- as.data.frame(matrix(NA, nrow = 11, ncol = 7))
 strat_df[, 7] <- c("Male", "Female", "<=High School", ">High School", 
                   "Non-Smokers", "Current Smokers", "No NCD Reported", 
-                  "NCD Reported", "Exercise High", "Exercise Medium",
-                  "Exercise Low")
+                  "NCD Reported", "High", "Medium",
+                  "Low")
 strat_df[1, -7] <- get_strat_est(fit_ob1_f, 1)
 strat_df[2, -7] <- get_strat_est(fit_ob1_m, 2)
 strat_df[3, -7] <- get_strat_est(fit_ob1_hs, 3)
@@ -1034,7 +1375,33 @@ strat_df %>% gt(rowname_col = "V7") %>%
   tab_row_group(
     label = "Sex",
     rows = c(1, 2)
+  ) %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = V4,
+      rows = c(2, 6, 8)
+    )
+  ) %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = V6,
+      rows = c(3, 5, 7, 10)
+    )
   )
+
+df_table_3 <- strat_df[-7]
+rownames(df_table_3) <- strat_df[, 7]
+colnames(df_table_3) <- c("N", "Cases", "Mixed-Local", "Neo-Local", 
+                          "Mixed-Imported", "Imported")
+write.csv(df_table_3, "df_table_3.csv")
+
+
 
 # get_output(fit_ob1_exer_h)
 # get_output(fit_ob1_exer_m)
@@ -1070,8 +1437,6 @@ refactor <- function(column) {
 
 # Apply recoding to all food item columns
 tuvalu_refactor <- mutate_at(tuvalu, food_names, refactor)
-
-
 
 tuv_adults <- tuvalu%>% 
   mutate(
