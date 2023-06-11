@@ -328,7 +328,7 @@ plot_pattern_probs <- function(model) {
 }
 
 # Plot modal consumption levels for each pattern
-plot_pattern_modes <- function(model, names_list = NULL) {
+plot_pattern_modes <- function(model, names_list = NULL, mode_size, text_size) {
   est_item_probs <- model$probs
   mode_item_probs <- lapply(est_item_probs, function(x) apply(x, 1, which.max))
   mode_item_probs <- as.data.frame(do.call("rbind", mode_item_probs))
@@ -347,11 +347,13 @@ plot_pattern_modes <- function(model, names_list = NULL) {
                                         "Mixed-Local", "Neo-Local")))
   mode_plot %>% ggplot(aes(x=Pattern, y=Item, fill=Level)) + 
     geom_tile(color="black") + 
-    geom_text(aes(label = Level), col="white", cex=2) +
+    geom_text(aes(label = Level), col="white", cex=mode_size) +
     scale_fill_gradient(trans="reverse") + 
     theme(legend.position="none") + 
     scale_x_discrete(labels = c("Neo-\nLocal", "Mixed-\nLocal",
-                                "Mixed-\nImported", "Imported"))
+                                "Mixed-\nImported", "Imported")) + 
+    theme(axis.text=element_text(size=text_size),
+          axis.title=element_text(size=text_size + 1))
 }
 
 #########
@@ -486,8 +488,8 @@ names_by_group <- c("Cassava", "Taro", "Rice", "Potatoes",
                     "Eggs", "Milk", 
                     "Sweetened_bevs", "Ice_cream", "Instant_noodles",
                     "Chips_biscuits", "Cake") 
-plot_pattern_modes(lc4, names_by_local)
-plot_pattern_modes(lc4, names_by_group)
+plot_pattern_modes(lc4, names_by_local, mode_size = 3, text_size = 11)
+plot_pattern_modes(lc4, names_by_group, mode_size = 3, text_size = 11)
 plot_pattern_modes(lc4)
 ### population shares of classes
 round(prop.table(table(lc4$predclass)), 4)
@@ -584,6 +586,16 @@ g7 <- tuvalu4 %>% filter(!is.na(exercise)) %>%
 
 ggarrange(g1, g2, g3, g4, g5, g6, g7, nrow = 2, ncol = 4, common.legend = TRUE,
           legend = "bottom")
+
+# Save plots separately
+ggsave(filename = "supp_fig_1_age.png", plot = g1)
+ggsave(filename = "supp_fig_1_sex.png", plot = g2)
+ggsave(filename = "supp_fig_1_educ.png", plot = g3)
+ggsave(filename = "supp_fig_1_region.png", plot = g4)
+ggsave(filename = "supp_fig_1_ncd.png", plot = g5)
+ggsave(filename = "supp_fig_1_smoking.png", plot = g6)
+ggsave(filename = "supp_fig_1_exercise.png", plot = g7)
+
 
 #================= Demographic cross tabulations ===============================
 
@@ -1293,15 +1305,36 @@ fit_ob1_exer_l <- stan_glmer(obesity_1 ~ latent_class + gender + age_center +
                                education_c + smoking_c + ncd + (1|region_c), 
                              data = tuvalu4[tuvalu4$exercise == 3, ], 
                              family = binomial, adapt_delta = 0.999) 
+
+### Region
+# Use 'stan_glm' instead of 'stan_glmer' because no random effects
+set.seed(611)
+fit_ob1_main <- stan_glm(obesity_1 ~ latent_class + gender + age_center + 
+                               education_c + smoking_c + ncd + exercise, 
+                             data = tuvalu4[tuvalu4$region_c == 0, ], 
+                             family = binomial, adapt_delta = 0.999) 
+set.seed(612)
+fit_ob1_outlying <- stan_glm(obesity_1 ~ latent_class + gender + age_center + 
+                               education_c + smoking_c + ncd + exercise, 
+                             data = tuvalu4[tuvalu4$region_c == 1, ], 
+                             family = binomial, adapt_delta = 0.999)
+
+
 save(fit_ob1_f, fit_ob1_m, fit_ob1_hs, fit_ob1_more_hs, fit_ob1_smoke, 
      fit_ob1_no_smoke, fit_ob1_ncd, fit_ob1_no_ncd, fit_ob1_exer_h,
-     fit_ob1_exer_m, fit_ob1_exer_l, file = "ob1_strat_models.RData")
+     fit_ob1_exer_m, fit_ob1_exer_l, fit_ob1_main, fit_ob1_outlying,
+     file = "ob1_strat_models.RData")
 
 #=================== Create table of stratified results ========================
 
 ### HELPER FUNCTIONS
 
-get_strat_est <- function(fit, i) {
+# returns formatted stratified results for table
+# Inputs
+#   fit: Stratified model object
+#   outputs: List of all stratified models rounded to 3 decimal places
+#   i: Index in list of stratified models
+get_strat_est <- function(fit, outputs, i) {
   return(c(nobs(fit), sum(fit$y == 1), "1 ref", 
            paste0(outputs[[i]][2,1], " [", outputs[[i]][2, 2], ", ",
                   outputs[[i]][2,3], "]"),
@@ -1317,25 +1350,27 @@ load("ob1_strat_models.RData")
 outputs <- lapply(list(fit_ob1_f, fit_ob1_m, fit_ob1_hs, fit_ob1_more_hs, 
                        fit_ob1_no_smoke, fit_ob1_smoke, 
                        fit_ob1_no_ncd, fit_ob1_ncd, fit_ob1_exer_h,
-                       fit_ob1_exer_m, fit_ob1_exer_l),
+                       fit_ob1_exer_m, fit_ob1_exer_l, fit_ob1_main,
+                       fit_ob1_outlying),
                   function(x) format(round(get_output(x), 3), nsmall = 2))
 
-strat_df <- as.data.frame(matrix(NA, nrow = 11, ncol = 7))
+strat_df <- as.data.frame(matrix(NA, nrow = 13, ncol = 7))
 strat_df[, 7] <- c("Male", "Female", "<=High School", ">High School", 
                   "Non-Smokers", "Current Smokers", "No NCD Reported", 
-                  "NCD Reported", "High", "Medium",
-                  "Low")
-strat_df[1, -7] <- get_strat_est(fit_ob1_f, 1)
-strat_df[2, -7] <- get_strat_est(fit_ob1_m, 2)
-strat_df[3, -7] <- get_strat_est(fit_ob1_hs, 3)
-strat_df[4, -7] <- get_strat_est(fit_ob1_more_hs, 4)
-strat_df[5, -7] <- get_strat_est(fit_ob1_no_smoke, 5)
-strat_df[6, -7] <- get_strat_est(fit_ob1_smoke, 6)
-strat_df[7, -7] <- get_strat_est(fit_ob1_no_ncd, 7)
-strat_df[8, -7] <- get_strat_est(fit_ob1_ncd, 8)
-strat_df[9, -7] <- get_strat_est(fit_ob1_exer_h, 9)
-strat_df[10, -7] <- get_strat_est(fit_ob1_exer_m, 10)
-strat_df[11, -7] <- get_strat_est(fit_ob1_exer_l, 11)
+                  "NCD Reported", "High", "Medium", "Low", "Main", "Outlying")
+strat_df[1, -7] <- get_strat_est(fit_ob1_f, outputs, 1)
+strat_df[2, -7] <- get_strat_est(fit_ob1_m, outputs, 2)
+strat_df[3, -7] <- get_strat_est(fit_ob1_hs, outputs, 3)
+strat_df[4, -7] <- get_strat_est(fit_ob1_more_hs, outputs, 4)
+strat_df[5, -7] <- get_strat_est(fit_ob1_no_smoke, outputs, 5)
+strat_df[6, -7] <- get_strat_est(fit_ob1_smoke, outputs, 6)
+strat_df[7, -7] <- get_strat_est(fit_ob1_no_ncd, outputs, 7)
+strat_df[8, -7] <- get_strat_est(fit_ob1_ncd, outputs, 8)
+strat_df[9, -7] <- get_strat_est(fit_ob1_exer_h, outputs, 9)
+strat_df[10, -7] <- get_strat_est(fit_ob1_exer_m, outputs, 10)
+strat_df[11, -7] <- get_strat_est(fit_ob1_exer_l, outputs, 11)
+strat_df[12, -7] <- get_strat_est(fit_ob1_main, outputs, 12)
+strat_df[13, -7] <- get_strat_est(fit_ob1_outlying, outputs, 13)
 
 strat_df %>% gt(rowname_col = "V7") %>%
   tab_header(title = "Table 3: Subgroup analyses of the association between dietary patterns and obesity") %>%
@@ -1356,6 +1391,10 @@ strat_df %>% gt(rowname_col = "V7") %>%
     V4 = "Neo-Local",
     V5 = "Mixed-Imported",
     V6 = "Imported") %>%
+  tab_row_group(
+    label = "Region",
+    rows = c(12, 13)
+  ) %>%
   tab_row_group(
     label = "Exercise",
     rows = c(9, 10, 11)
