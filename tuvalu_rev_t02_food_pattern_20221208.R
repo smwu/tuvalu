@@ -24,7 +24,7 @@ library(ggpubr)  # grid of plots
 library(gt)
 
 
-#==================== Helper functions ================================
+#==================== Helper functions =========================================
 #Create functions to extract estimate, CI and p-values
 specify_decimal <- function(x, k) trimws(format(round(x, k), nsmall=k))
 linear_coef<-function(b){
@@ -32,6 +32,141 @@ linear_coef<-function(b){
 }
 logistic_coef<-function(b){
   cbind(names(b$coefficients[,1]),paste(specify_decimal(exp(b$coefficients[,1]),2)," (",specify_decimal(exp(b$coefficients[,1]+qnorm(0.025)*b$coefficients[,2]),2),"-",specify_decimal(exp(b$coefficients[,1]+qnorm(c(.975))*b$coefficients[,2]),2),", p=",specify_decimal(b$coefficients[,4],3),")",sep=""))
+}
+
+# function to obtain ABIC for a model
+abic <- function(llik, N, npar) {
+  return( (-2*llik) + ((log((N + 2) / 24)) * npar) )
+}
+# Obtain CAIC for a model
+caic <- function(llik, N, npar) {
+  return( (-2*llik) + npar * (1 + log(N)) )
+}
+# Calculate entropy. Closer to 1 indicates better class separation
+entropy <- function(p) {
+  plogp <- - p * log(p)
+  plogp[is.na(plogp)] <- 0  # the limit of plogp is 0 by L'Hopital's
+  return(sum(plogp))
+}
+entropy_R2 <- function(model) {
+  error_prior <- entropy(model$P)
+  error_post <- mean(apply(model$posterior, 1, entropy))
+  return((error_prior - error_post) / error_prior)
+}
+# Calculate average max class membership probability across individuals
+class_prob <- function(model) {
+  return( mean(apply(model$posterior, 1, max)) )
+}
+
+# Plot probabilities of the consumption levels for each pattern
+plot_pattern_probs <- function(model) {
+  lcmodel <- reshape2::melt(model$probs, level=2)
+  lcmodel %>%
+    ggplot(aes(x = L2, y = value, fill = Var2)) + 
+    geom_bar(stat = "identity", position = "stack") + 
+    facet_grid(Var1 ~ .) + 
+    scale_fill_brewer(type="seq", palette="Greys") + 
+    theme_bw() + 
+    labs(x = "Food items",y="Item consumption probabilities", 
+         fill ="Item \nconsumption \nprobabilities") + 
+    theme( axis.text.y=element_text(size=7),
+           #axis.ticks.y=element_blank(),   
+           panel.grid.major.y=element_blank(),
+           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+}
+
+# Plot modal consumption levels for each pattern
+plot_pattern_modes <- function(model, names_list = NULL, mode_size, text_size) {
+  est_item_probs <- model$probs
+  mode_item_probs <- lapply(est_item_probs, function(x) apply(x, 1, which.max))
+  mode_item_probs <- as.data.frame(do.call("rbind", mode_item_probs))
+  if (is.null(names_list)) {
+    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs), 
+                                           levels=rownames(mode_item_probs)))
+  } else {
+    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs),
+                                           levels=names_list))
+  }
+  colnames(mode_item_probs) <- c("Local", "Diverse-Local", "Restricted-Imported", 
+                                 "Imported", "Item")
+  mode_plot <- mode_item_probs %>% gather("Pattern", "Level", -Item) 
+  mode_plot$Pattern <- fct_rev(factor(mode_plot$Pattern, levels = 
+                                        c("Imported", "Restricted-Imported",  
+                                          "Diverse-Local", "Local")))
+  mode_plot %>% ggplot(aes(x=Pattern, y=Item, fill=Level)) + 
+    geom_tile(color="black") + 
+    geom_text(aes(label = Level), col="white", cex=mode_size) +
+    scale_fill_gradient(trans="reverse") + 
+    theme(legend.position="none") + 
+    scale_x_discrete(labels = c("Local", "Diverse-\nLocal",
+                                "Restricted-\nImported", "Imported")) + 
+    theme(axis.text=element_text(size=text_size),
+          axis.title=element_text(size=text_size + 1))
+}
+
+# 'create_demog_table' creates a table of demographic characteristics using 
+# only the data in the specified dataset(s)
+# Input: dataset, column_names, row_names
+# Output: word document including formatted demographic table 
+create_demog_table <- function(dataset, column_names, row_names) {
+  # Create table of demographic comparisons stratified by malaria status
+  lc_demog <- CreateTableOne(vars = c("region_c", "gender", "age", "age_c", 
+                                      "education_c", "ncd", "smoking_c", 
+                                      "exercise"),
+                             factorVars = c("region_c", "gender", "age_c", 
+                                            "education_c", "ncd", 
+                                            "smoking_c", "exercise"),
+                             strata = "latent_class", addOverall = T,
+                             data = dataset)
+  lc_demog_tab <- print(lc_demog, noSpaces = TRUE, nonnormal = c("age", "income"))
+  #lc_demog_tab <- print(lc_demog, noSpaces = TRUE)
+  
+  lc_demog_tab <- as.data.frame(lc_demog_tab)[, c(2:5, 1, 6)]
+  colnames(lc_demog_tab) <- column_names
+  rownames(lc_demog_tab) <- row_names
+  # lc_demog_tab <- print(lc_demog, noSpaces = TRUE, showAllLevels = TRUE)
+  # lc_demog_tab <- lc_demog_tab[,1:7] 
+  # print(lc_demog_tab) %>% kbl %>% kable_paper("hover")
+  
+  # Convert to table
+  table <- flextable(lc_demog_tab %>% rownames_to_column("Demographic Variable"))
+  table <- align(table, align = "left", part="all")
+  table <- width(table, width=1.1)
+  # Export to word
+  doc <- read_docx()
+  doc <- body_add_par(doc, "Table 1: Distribution of dietary patterns by demographic variables.", 
+                      style = "table title")
+  doc <- body_add_flextable(doc, value = table)
+  #table_name <- paste0('Table_LC_Demog.docx')
+  table_name <- paste0('Table_LC_Demographics_FINAL.docx')
+  docx <- print(doc, target = table_name)
+  write.csv(lc_demog_tab, file = "df_table_1.csv")
+}
+
+create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
+                                  table_name) {
+  # Create table of demographic comparisons stratified by malaria status
+  lc_demog <- CreateTableOne(vars = c("gender", "age", "education_c", "region_c",
+                                      "ncd", "smoking_c", "income", "exercise",
+                                      "latent_class"),
+                             factorVars = c("gender", "education_c", "region_c",
+                                            "ncd", "smoking_c", "exercise",
+                                            "latent_class"),
+                             strata = strat_var, addOverall = T,
+                             data = dataset)
+  lc_demog_tab <- print(lc_demog, noSpaces = TRUE, nonnormal = c("age", "income"))
+  lc_demog_tab <- as.data.frame(lc_demog_tab)[, c(2:3, 1, 4)]
+  colnames(lc_demog_tab) <- column_names
+  rownames(lc_demog_tab) <- row_names
+  
+  # Convert to table
+  table <- flextable(lc_demog_tab %>% rownames_to_column("Feature"))
+  table <- align(table, align = "left", part="all")
+  table <- width(table,width=1.5)
+  # Export to word
+  doc <- read_docx()
+  doc <- body_add_flextable(doc, value = table)
+  docx <- print(doc, target = table_name)
 }
 
 #==================== Import and clean data ===================================
@@ -285,79 +420,6 @@ corrplot(a, tl.pos='l')
 
 #================= Dietary pattern analysis ===================================
 
-### HELPER FUNCTIONS
-# function to obtain ABIC for a model
-abic <- function(llik, N, npar) {
-  return( (-2*llik) + ((log((N + 2) / 24)) * npar) )
-}
-# Obtain CAIC for a model
-caic <- function(llik, N, npar) {
-  return( (-2*llik) + npar * (1 + log(N)) )
-}
-# Calculate entropy. Closer to 1 indicates better class separation
-entropy <- function(p) {
-  plogp <- - p * log(p)
-  plogp[is.na(plogp)] <- 0  # the limit of plogp is 0 by L'Hopital's
-  return(sum(plogp))
-}
-entropy_R2 <- function(model) {
-  error_prior <- entropy(model$P)
-  error_post <- mean(apply(model$posterior, 1, entropy))
-  return((error_prior - error_post) / error_prior)
-}
-# Calculate average max class membership probability across individuals
-class_prob <- function(model) {
-  return( mean(apply(model$posterior, 1, max)) )
-}
-
-# Plot probabilities of the consumption levels for each pattern
-plot_pattern_probs <- function(model) {
-  lcmodel <- reshape2::melt(model$probs, level=2)
-  lcmodel %>%
-    ggplot(aes(x = L2, y = value, fill = Var2)) + 
-    geom_bar(stat = "identity", position = "stack") + 
-    facet_grid(Var1 ~ .) + 
-    scale_fill_brewer(type="seq", palette="Greys") + 
-    theme_bw() + 
-    labs(x = "Food items",y="Item consumption probabilities", 
-         fill ="Item \nconsumption \nprobabilities") + 
-    theme( axis.text.y=element_text(size=7),
-           #axis.ticks.y=element_blank(),   
-           panel.grid.major.y=element_blank(),
-           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-}
-
-# Plot modal consumption levels for each pattern
-plot_pattern_modes <- function(model, names_list = NULL, mode_size, text_size) {
-  est_item_probs <- model$probs
-  mode_item_probs <- lapply(est_item_probs, function(x) apply(x, 1, which.max))
-  mode_item_probs <- as.data.frame(do.call("rbind", mode_item_probs))
-  if (is.null(names_list)) {
-    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs), 
-                                           levels=rownames(mode_item_probs)))
-  } else {
-    mode_item_probs$Item <- fct_rev(factor(rownames(mode_item_probs),
-                                           levels=names_list))
-  }
-  colnames(mode_item_probs) <- c("Neo-Local", "Mixed-Local", "Mixed-Imported", 
-                                 "Imported", "Item")
-  mode_plot <- mode_item_probs %>% gather("Pattern", "Level", -Item) 
-  mode_plot$Pattern <- fct_rev(factor(mode_plot$Pattern, levels = 
-                                      c("Imported", "Mixed-Imported",  
-                                        "Mixed-Local", "Neo-Local")))
-  mode_plot %>% ggplot(aes(x=Pattern, y=Item, fill=Level)) + 
-    geom_tile(color="black") + 
-    geom_text(aes(label = Level), col="white", cex=mode_size) +
-    scale_fill_gradient(trans="reverse") + 
-    theme(legend.position="none") + 
-    scale_x_discrete(labels = c("Neo-\nLocal", "Mixed-\nLocal",
-                                "Mixed-\nImported", "Imported")) + 
-    theme(axis.text=element_text(size=text_size),
-          axis.title=element_text(size=text_size + 1))
-}
-
-#########
-
 tuv_diet <- tuvalu2 %>% dplyr::select(c(`Participant No.`, all_of(food_names)))
 names(tuv_diet) <- c("Participant", "Rice", "Taro", "Breadfruit", "Fish", "Pork", "Cabbage", 
                      "Bird_nest_fern", "Banana", "Coconut", "Imp_fruits", "Eggs",
@@ -371,6 +433,27 @@ tuv_diet_compl <- tuv_diet_compl %>% dplyr::select(!(Participant))
 # Save data
 # write.csv(tuv_diet_compl, "diet_pattern_data.csv")
 
+#================ Check for systematic differences in dropped participants =====
+tuv_compl <- tuvalu2 %>% filter(`Participant No.` %in% tuv_diet_compl$Participant)
+tuv_miss <- tuvalu2 %>% filter(!(`Participant No.` %in% tuv_diet_compl$Participant))
+summary(tuv_compl[, c("age", "gender", "education_c", "region_c", "bmi", "ncd", 
+                      "smoking_c", "exercise")])
+summary(tuv_miss[, c("age", "gender", "education_c", "region_c", "bmi", "ncd", 
+                      "smoking_c", "exercise")])
+
+library(naniar)
+mcar_test(tuvalu2[, c(food_names, "Height (cm)", "gender", "region", "bmi", 
+                      "age", "ncd", "exercise", "education", "smoking")])
+
+library(VIM)
+temp <- tuvalu2[, c(food_names, "Height (cm)", "gender", "region", "bmi", "age", "ncd", 
+                    "exercise", "education", "smoking")]
+missing_pattern <- aggr(temp, labels = names(temp), sortVars = TRUE, 
+                        numbers = TRUE, cex.axis=0.8, digits = 3)
+comb_percent <- summary(missing_pattern)$combinations %>% arrange(Percent)
+as.data.frame(round(comb_percent$Percent, 2))
+
+#================ Fit LCA ======================================================
 # formula for basic LCA
 f <- as.formula(paste0("cbind(", paste0(names(tuv_diet_compl), collapse=", "), ")~1") )
 
@@ -488,8 +571,8 @@ names_by_group <- c("Cassava", "Taro", "Rice", "Potatoes",
                     "Eggs", "Milk", 
                     "Sweetened_bevs", "Ice_cream", "Instant_noodles",
                     "Chips_biscuits", "Cake") 
-plot_pattern_modes(lc4, names_by_local, mode_size = 3, text_size = 11)
-plot_pattern_modes(lc4, names_by_group, mode_size = 3, text_size = 11)
+plot_pattern_modes(lc4, names_by_local, mode_size = 3, text_size = 11.5)
+plot_pattern_modes(lc4, names_by_group, mode_size = 3, text_size = 11.5)
 plot_pattern_modes(lc4)
 ### population shares of classes
 round(prop.table(table(lc4$predclass)), 4)
@@ -507,14 +590,14 @@ sort(modal_probs)[1:50]  ## lowest confidence predictions
 tuvalu4 <- tuvalu2[!(tuvalu2$`Participant No.` %in% diet_na_inds), ]
 indiv_class <- lc4$predclass
 tuvalu4$latent_class <- factor(indiv_class, levels=c(2, 1, 3, 4),
-                               labels = c("Mixed-Local", "Neo-Local", 
-                                          "Mixed-Imported", "Imported"))
+                               labels = c("Diverse-Local", "Local", 
+                                          "Restricted-Imported", "Imported"))
 tuvalu4$obesity_1 <- factor(tuvalu4$obesity_1, levels=c(0,1))
 tuvalu4$obesity_3 <- factor(tuvalu4$obesity_3, levels=c(0,1))
 tuvalu4$age_center <- tuvalu4$age - mean(tuvalu4$age, na.rm = TRUE)
 tuvalu4$Pattern <- factor(indiv_class, levels = c(1,2,3,4), 
-                          labels = c("Neo-Local", "Mixed-Local", 
-                                     "Mixed-Imported", "Imported"))
+                          labels = c("Local", "Diverse-Local", 
+                                     "Restricted-Imported", "Imported"))
 tuvalu4$height_center <- tuvalu4$`Height (cm)` - mean(tuvalu4$`Height (cm)`, 
                                                       na.rm = TRUE)
 # Save data for analysis
@@ -599,74 +682,6 @@ ggsave(filename = "supp_fig_1_exercise.png", plot = g7)
 
 #================= Demographic cross tabulations ===============================
 
-### HELPER FUNCTIONS
-# 'create_demog_table' creates a table of demographic characteristics using 
-# only the data in the specified dataset(s)
-# Input: dataset, column_names, row_names
-# Output: word document including formatted demographic table 
-create_demog_table <- function(dataset, column_names, row_names) {
-  # Create table of demographic comparisons stratified by malaria status
-  lc_demog <- CreateTableOne(vars = c("region_c", "gender", "age", "age_c", 
-                                      "education_c", "ncd", "smoking_c", 
-                                      "exercise"),
-                             factorVars = c("region_c", "gender", "age_c", 
-                                            "education_c", "ncd", 
-                                            "smoking_c", "exercise"),
-                             strata = "latent_class", addOverall = T,
-                             data = dataset)
-  lc_demog_tab <- print(lc_demog, noSpaces = TRUE, nonnormal = c("age", "income"))
-  #lc_demog_tab <- print(lc_demog, noSpaces = TRUE)
-  
-  lc_demog_tab <- as.data.frame(lc_demog_tab)[, c(2:5, 1, 6)]
-  colnames(lc_demog_tab) <- column_names
-  rownames(lc_demog_tab) <- row_names
-  # lc_demog_tab <- print(lc_demog, noSpaces = TRUE, showAllLevels = TRUE)
-  # lc_demog_tab <- lc_demog_tab[,1:7] 
-  # print(lc_demog_tab) %>% kbl %>% kable_paper("hover")
-  
-  # Convert to table
-  table <- flextable(lc_demog_tab %>% rownames_to_column("Demographic Variable"))
-  table <- align(table, align = "left", part="all")
-  table <- width(table, width=1.1)
-  # Export to word
-  doc <- read_docx()
-  doc <- body_add_par(doc, "Table 1: Distribution of dietary patterns by demographic variables.", 
-                      style = "table title")
-  doc <- body_add_flextable(doc, value = table)
-  #table_name <- paste0('Table_LC_Demog.docx')
-  table_name <- paste0('Table_LC_Demographics_FINAL.docx')
-  docx <- print(doc, target = table_name)
-  write.csv(lc_demog_tab, file = "df_table_1.csv")
-}
-
-create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
-                                  table_name) {
-  # Create table of demographic comparisons stratified by malaria status
-  lc_demog <- CreateTableOne(vars = c("gender", "age", "education_c", "region_c",
-                                      "ncd", "smoking_c", "income", "exercise",
-                                      "latent_class"),
-                             factorVars = c("gender", "education_c", "region_c",
-                                            "ncd", "smoking_c", "exercise",
-                                            "latent_class"),
-                             strata = strat_var, addOverall = T,
-                             data = dataset)
-  lc_demog_tab <- print(lc_demog, noSpaces = TRUE, nonnormal = c("age", "income"))
-  lc_demog_tab <- as.data.frame(lc_demog_tab)[, c(2:3, 1, 4)]
-  colnames(lc_demog_tab) <- column_names
-  rownames(lc_demog_tab) <- row_names
-  
-  # Convert to table
-  table <- flextable(lc_demog_tab %>% rownames_to_column("Feature"))
-  table <- align(table, align = "left", part="all")
-  table <- width(table,width=1.5)
-  # Export to word
-  doc <- read_docx()
-  doc <- body_add_flextable(doc, value = table)
-  docx <- print(doc, target = table_name)
-}
-
-######
-
 tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
 
 table(tuvalu4$obesity_1)
@@ -676,7 +691,7 @@ hist(tuvalu4$wc, breaks= 20)
 create_demog_table(tuvalu4 %>%
                      mutate(region_c = factor(region_c, 
                                               labels = c("Main", "Outlying"))), 
-                   column_names = c("Neo-Local", "Mixed-Local", "Mixed-Imported", 
+                   column_names = c("Local", "Diverse-Local", "Restricted-Imported", 
                                     "Imported", "Overall", "P-value"),
                    row_names = c("Sample Size", "Region: Outlying (%)", 
                                  "Sex: Female (%)", 
@@ -854,7 +869,7 @@ save(fit_ob1, fit_ob1_int, fit_ob3, fit_ob3_int, fit_wt, fit_wt_int,
 # temp <- tuvalu4 %>% drop_na(obesity_1, latent_class, gender, age_center, 
 #                             education_c, smoking_c, exercise, ncd, region_c,
 #                             height_center, obesity_3, `Weight..kg.`)
-# temp_ref <- temp[temp$latent_class == "Mixed-Local", ]
+# temp_ref <- temp[temp$latent_class == "Diverse-Local", ]
 # prop.table(table(temp_ref$obesity_1))
 # prop.table(table(temp_ref$obesity_3))
 # mean(temp_ref$Weight..kg.)
@@ -883,7 +898,7 @@ weight_PEP <- format(round(get_PEP(fit_wt, 1:4), 3), nsmall = 2)
 
 # Summary regression Table 2 OPTION 1 ==========================================
 regr_df <- as.data.frame(matrix(NA, nrow = 4, ncol = 9))
-regr_df[, 9] <- c("Mixed-Local (Ref)", "Neo-Local", "Mixed-Imported", "Imported")
+regr_df[, 9] <- c("Diverse-Local (Ref)", "Local", "Restricted-Imported", "Imported")
 regr_df[, 1] <- obesity_prev
 regr_df[1, 2:3] <- c(1, NA)
 regr_df[2:4, 2:3] <- cbind(obesity[2:4, 1], 
@@ -966,7 +981,7 @@ write.csv(df_table_2, "df_table_2.csv")
 
 # Summary regression Table 2 OPTION 2 WITH PEP =================================
 regr_df <- as.data.frame(matrix(NA, nrow = 4, ncol = 12))
-regr_df[, 12] <- c("Mixed-Local (Ref)", "Neo-Local", "Mixed-Imported", "Imported")
+regr_df[, 12] <- c("Diverse-Local (Ref)", "Local", "Restricted-Imported", "Imported")
 regr_df[, 1] <- obesity_prev
 regr_df[1, 2:4] <- c(1, NA, NA)
 regr_df[2:4, 2:3] <- cbind(obesity[2:4, 1], 
@@ -1056,7 +1071,7 @@ write.csv(df_table_2, "df_table_2_withPEP.csv")
 
 # Summary regression Table 2 OPTION 3 ==========================================
 regr_df <- as.data.frame(matrix(NA, nrow = 4, ncol = 7))
-regr_df[, 7] <- c("Mixed-Local (Ref)", "Neo-Local", "Mixed-Imported", "Imported")
+regr_df[, 7] <- c("Diverse-Local (Ref)", "Local", "Restricted-Imported", "Imported")
 regr_df[1:4, 1:2] <- cbind(obesity[1:4, 1], 
                             apply(obesity[1:4, ], 1, 
                                   function(x) paste0("[",x[2], ", ", x[3], "]")))
@@ -1123,7 +1138,7 @@ regr_df %>% gt(rowname_col = "V7") %>%
 
 # Full regression table ========================================================
 regr_df <- as.data.frame(matrix(NA, nrow = 12, ncol = 7))
-regr_df[, 7] <- c("Intercept", "Neo-Local", "Mixed-Imported", "Imported",
+regr_df[, 7] <- c("Intercept", "Local", "Restricted-Imported", "Imported",
                        "Sex = F", "Age (Centered)", "Education >HS", 
                        "Smoking = Yes", "Exercise = Med", "Exercise = Low", 
                        "NCD = Yes", "Height (Centered)")
@@ -1387,9 +1402,9 @@ strat_df %>% gt(rowname_col = "V7") %>%
   cols_label(
     V1 = "N",
     V2 = "Cases",
-    V3 = "Mixed-Local",
-    V4 = "Neo-Local",
-    V5 = "Mixed-Imported",
+    V3 = "Diverse-Local",
+    V4 = "Local",
+    V5 = "Restricted-Imported",
     V6 = "Imported") %>%
   tab_row_group(
     label = "Region",
@@ -1436,8 +1451,8 @@ strat_df %>% gt(rowname_col = "V7") %>%
 
 df_table_3 <- strat_df[-7]
 rownames(df_table_3) <- strat_df[, 7]
-colnames(df_table_3) <- c("N", "Cases", "Mixed-Local", "Neo-Local", 
-                          "Mixed-Imported", "Imported")
+colnames(df_table_3) <- c("N", "Cases", "Diverse-Local", "Local", 
+                          "Restricted-Imported", "Imported")
 write.csv(df_table_3, "df_table_3.csv")
 
 
