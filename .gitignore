@@ -4,3 +4,6 @@
 .Ruserdata
 .Rhistory
 *.xlsx
+Data/clean_data_2022.csv
+Data/diet_pattern_data.csv
+Data/diet_pattern_data_analysis.csv
