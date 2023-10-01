@@ -169,6 +169,50 @@ create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
   docx <- print(doc, target = table_name)
 }
 
+# Get regression point and 95% interval estimates, exponentiating for logistic 
+# regression
+get_output <- function(fit, exponentiate = TRUE) {
+  if (exponentiate) {
+    output <- data.frame(exp(fit$coefficients),
+                         exp(posterior_interval(fit, prob = 0.95)[1:length(fit$coefficients),]))
+    colnames(output) <- c("Cond'l OR", "2.5%", "97.5%")
+    cutoff <- 1
+  } else {
+    output <- data.frame(fit$coefficients,
+                         posterior_interval(fit, prob = 0.95)[1:length(fit$coefficients),])
+    colnames(output) <- c("Mean", "2.5%", "97.5%")
+    cutoff <- 0
+  }
+  output$signif <- 0
+  output$signif[(output$`2.5%` < cutoff) & (output$`97.5` < cutoff)] <- 1
+  output$signif[(output$`2.5%` > cutoff) & (output$`97.5` > cutoff)] <- 1
+  print(paste0("Number of observations: ", nobs(fit)))
+  print(output)
+}
+
+# `get_prev` calculates the prevalences given a vector of coefficients from 
+# a logistic regression model, where the first value corresponds to the log-odds
+# in the reference group
+# Since odds = prev/(1-prev), prev = odds/(1+odds)
+get_prevs <- function(odds_coefs) {
+  prev <- numeric(length(odds_coefs))
+  prev[1] <- exp(odds_coefs[1]) / (1 + exp(odds_coefs[1]))
+  for (i in 2:length(odds_coefs)) {
+    # odds of level = OR * baseline_odds
+    odds_i <- exp(odds_coefs[i]) * exp(odds_coefs[1])
+    prev[i] <- odds_i / (1 + odds_i)
+  }
+  return(prev)
+}
+
+# From posterior samples, get posterior error probability (PEP) to control 
+# false discovery rate and S-type errors.
+# PEP is P(est <= 0) in this case because all the estimates are positive
+get_PEP <- function(fit, cols) {
+  post_samp <- as.data.frame(fit)
+  PEP <- apply(post_samp[, cols], 2, function(x) mean(x <= 0))
+  return(PEP)
+}
 #==================== Import and clean data ===================================
 #Dataset manipulation: R is case-sensitive, so we use lower case for all variables
 
@@ -177,8 +221,8 @@ create_outcomes_table <- function(dataset, strat_var, column_names, row_names,
 #tuvalu<-read_excel("G:/My Drive/tuvalu/Dataset/2022-Nutrition-Survey_20220530.xlsx")
 #Set up working directory, save the output into T02 folders
 #setwd("G:/My Drive/tuvalu/Results/work/T02/20221208")
-setwd("/Users/Stephanie/Documents/GitHub/tuvalu")
-tuvalu <- read_excel("2022-Nutrition-Survey_20220530.xlsx")
+setwd("/Users/Stephanie/Documents/GitHub/tuvalu/")
+tuvalu <- read_excel("Data/2022-Nutrition-Survey_20220530.xlsx")
 
 #use pipeline in package 'dplyr' to clean data; mutate the names of variables
 
@@ -431,7 +475,7 @@ tuv_diet_compl <- tuv_diet %>% drop_na() # complete cases only
 diet_na_inds <- setdiff(tuv_diet$Participant, tuv_diet_compl$Participant) # dropped id's due to NAs
 tuv_diet_compl <- tuv_diet_compl %>% dplyr::select(!(Participant))
 # Save data
-# write.csv(tuv_diet_compl, "diet_pattern_data.csv")
+# write.csv(tuv_diet_compl, "Data/diet_pattern_data.csv")
 
 #================ Check for systematic differences in dropped participants =====
 tuv_compl <- tuvalu2 %>% filter(`Participant No.` %in% tuv_diet_compl$Participant)
@@ -556,9 +600,9 @@ tuv_diet_compl <- read.csv("diet_pattern_data.csv")
 f <- as.formula(paste0("cbind(", paste0(names(tuv_diet_compl), collapse=", "), ")~1") )
 lc4<-poLCA(f, data=tuv_diet_compl, nclass=4, na.rm = FALSE, nrep=30, 
            maxiter=3000, verbose=FALSE)
-# save(lc4, file = "lc4.RData")
+# save(lc4, file = "Results/lc4.RData")
 
-load("lc4.RData")
+load("Results/lc4.RData")
 names_by_local <- c("Cassava", "Taro", "Breadfruit", "Cabbage", "Bird_nest_fern", 
                     "Banana", "Coconut", "Papaya", "Pandanus", "Cucumber", "Fish",
                     "Pork", "Rice", "Potatoes", "Imp_fruits", "Imp_vegs", 
@@ -682,7 +726,7 @@ ggsave(filename = "supp_fig_1_exercise.png", plot = g7)
 
 #================= Demographic cross tabulations ===============================
 
-tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
+tuvalu4 <- read.csv("Data/diet_pattern_data_analysis.csv")
 
 table(tuvalu4$obesity_1)
 table(tuvalu4$obesity_3)
@@ -765,58 +809,16 @@ create_outcomes_table(tuvalu4, strat_var = "obesity_3",
 
 # ============ Fit using Bayesian hierarchical modeling ========================
 
-### HELPER FUNCTIONS
-
-get_output <- function(fit, exponentiate = TRUE) {
-  if (exponentiate) {
-    output <- data.frame(exp(fit$coefficients),
-                         exp(posterior_interval(fit, prob = 0.95)[1:length(fit$coefficients),]))
-    colnames(output) <- c("Cond'l OR", "2.5%", "97.5%")
-    cutoff <- 1
-  } else {
-    output <- data.frame(fit$coefficients,
-                         posterior_interval(fit, prob = 0.95)[1:length(fit$coefficients),])
-    colnames(output) <- c("Mean", "2.5%", "97.5%")
-    cutoff <- 0
-  }
-  output$signif <- 0
-  output$signif[(output$`2.5%` < cutoff) & (output$`97.5` < cutoff)] <- 1
-  output$signif[(output$`2.5%` > cutoff) & (output$`97.5` > cutoff)] <- 1
-  print(paste0("Number of observations: ", nobs(fit)))
-  print(output)
-}
-
-# `get_prev` calculates the prevalences given a vector of coefficients from 
-# a logistic regression model, where the first value corresponds to the log-odds
-# in the reference group
-# Since odds = prev/(1-prev), prev = odds/(1+odds)
-get_prevs <- function(odds_coefs) {
-  prev <- numeric(length(odds_coefs))
-  prev[1] <- exp(odds_coefs[1]) / (1 + exp(odds_coefs[1]))
-  for (i in 2:length(odds_coefs)) {
-    # odds of level = OR * baseline_odds
-    odds_i <- exp(odds_coefs[i]) * exp(odds_coefs[1])
-    prev[i] <- odds_i / (1 + odds_i)
-  }
-  return(prev)
-}
-
-# From posterior samples, get posterior error probability (PEP) to control 
-# false discovery rate and S-type errors.
-# PEP is P(est <= 0) in this case because all the estimates are positive
-get_PEP <- function(fit, cols) {
-  post_samp <- as.data.frame(fit)
-  PEP <- apply(post_samp[, cols], 2, function(x) mean(x <= 0))
-  return(PEP)
-}
-
-###########
-
-tuvalu4 <- read.csv("diet_pattern_data_analysis.csv")
+tuvalu4 <- read.csv("Data/diet_pattern_data_analysis.csv")
 factor_cols <- c("region_c", "obesity_1", "obesity_3", "gender", "age_c", 
                  "education_c", "income_c", "ncd", "marital", "smoking_c", 
                  "alcohol_c", "latent_class", "Pattern", "exercise")
-tuvalu4 <- tuvalu4 %>% mutate_at(factor_cols, as.factor)
+tuvalu4 <- tuvalu4 %>% 
+  mutate_at(factor_cols, as.factor) %>%
+  rename(weight = `Weight..kg.`) %>%
+  mutate(latent_class = factor(latent_class,  levels=c(2, 1, 3, 4),
+                               labels = c("Diverse-Local", "Local", 
+                                          "Restricted-Imported", "Imported")))
 
 set.seed(111)
 # OBESITY
@@ -833,7 +835,12 @@ fit_ob1_int <- stan_glmer(obesity_1 ~ latent_class + gender + age_center + educa
                           family = binomial, adapt_delta = 0.999) 
 get_output(fit_ob1_int)
 
-# with more interactions
+# marginal
+set.seed(113)
+fit_ob1_marg <- stan_glmer(obesity_1 ~ latent_class + (1|region_c), data = tuvalu4, 
+                           family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob1_marg)
+
 
 # MORBID OBESITY
 set.seed(121)
@@ -849,21 +856,35 @@ fit_ob3_int <- stan_glmer(obesity_3 ~ latent_class + gender + age_center + educa
                         family = binomial, adapt_delta = 0.999) 
 get_output(fit_ob3_int)
 
-# WEIGHT (adding height as a variable)
+# marginal
+set.seed(123)
+fit_ob3_marg <- stan_glmer(obesity_3 ~ latent_class + (1|region_c), data = tuvalu4, 
+                           family = binomial, adapt_delta = 0.999) 
+get_output(fit_ob3_marg)
+
+
+# WEIGHT (kg) (adding height as a variable)
 set.seed(131)
-fit_wt <- stan_glmer(`Weight (kg)` ~ latent_class + gender + age_center + education_c + 
+fit_wt <- stan_glmer(weight ~ latent_class + gender + age_center + education_c + 
                        smoking_c + exercise + ncd + height_center + (1|region_c), 
                      data = tuvalu4, adapt_delta = 0.999)  
 get_output(fit_wt, exponentiate = FALSE)
 
 set.seed(132)
-fit_wt_int <- stan_glmer(`Weight (kg)` ~ latent_class + gender + age_center + education_c + 
+fit_wt_int <- stan_glmer(weight ~ latent_class + gender + age_center + education_c + 
                        smoking_c + exercise + ncd + height_center + latent_class:gender + 
                          latent_class:ncd + (1|region_c), 
                      data = tuvalu4, adapt_delta = 0.999)  
 get_output(fit_wt_int, exponentiate = FALSE)
 
+# marginal
+set.seed(133)
+fit_wt_marg <- stan_glmer(weight ~ latent_class + (1|region_c), 
+                          data = tuvalu4, adapt_delta = 0.999) 
+get_output(fit_wt_marg, exponentiate = FALSE)
+
 save(fit_ob1, fit_ob1_int, fit_ob3, fit_ob3_int, fit_wt, fit_wt_int,
+     fit_ob1_marg, fit_ob3_marg, fit_wt_marg,
      file = "all_models.RData")
 
 # temp <- tuvalu4 %>% drop_na(obesity_1, latent_class, gender, age_center, 
@@ -976,7 +997,7 @@ rownames(df_table_2) <- regr_df[, 9]
 colnames(df_table_2) <- c("Post Prev Ob", "Post OR Ob", "95% Cred Int Ob", 
                           "Post Prev MOb", "Post OR MOb", "95% Cred Int MOb", 
                           "Post Mean Wt", "95% Cred Int Wt")
-write.csv(df_table_2, "df_table_2.csv")
+write.csv(df_table_2, "Results/df_table_2.csv")
 
 
 # Summary regression Table 2 OPTION 2 WITH PEP =================================
@@ -1065,7 +1086,7 @@ rownames(df_table_2) <- regr_df[, 12]
 colnames(df_table_2) <- c("Post Prev Ob", "Post OR Ob", "95% Cred Int Ob", "PEP Ob",
                           "Post Prev MOb", "Post OR MOb", "95% Cred Int MOb", "PEP MOb", 
                           "Post Mean Wt", "95% Cred Int Wt", "PEP Wt")
-write.csv(df_table_2, "df_table_2_withPEP.csv")
+write.csv(df_table_2, "Results/Tables/df_table_2_withPEP.csv")
 
 
 
@@ -1216,7 +1237,116 @@ rownames(df_table_2_full) <- regr_df[, 7]
 colnames(df_table_2_full) <- c("Post Odds or OR Ob", "95% Cred Int Ob", 
                           "Post Odds or OR MOb", "95% Cred Int MOb", 
                           "Post Mean Wt", "95% Cred Int Wt")
-write.csv(df_table_2_full, "df_table_2_full.csv")
+write.csv(df_table_2_full, "Results/Tables/df_table_2_full.csv")
+
+
+# Summary regression Table 2 MARGINAL WITH PEP =================================
+obesity <- format(round(get_output(fit_ob1_marg, exponentiate = TRUE), 3), 
+                  nsmall = 2)
+obesity$signif <- as.integer(obesity$signif)
+obesity$signif[1] <- 0  # get rid of significance for reference level
+morbid_obesity <- format(round(get_output(fit_ob3_marg, exponentiate = TRUE), 3), 
+                         nsmall = 2)
+morbid_obesity$signif <- as.integer(morbid_obesity$signif)
+morbid_obesity$signif[1] <- 0  # get rid of significance for reference level
+weight <- format(round(get_output(fit_wt_marg, exponentiate = FALSE), 3), 
+                 nsmall = 2)
+weight$signif <- as.integer(weight$signif)
+weight$signif[1] <- 0  # get rid of significance for reference level
+
+obesity_prev <- format(round(get_prevs(fit_ob1_marg$coefficients[1:4]), 3), 
+                       nsmall = 2)
+morbid_obesity_prev <- format(round(get_prevs(fit_ob3_marg$coefficients[1:4]), 3), 
+                              nsmall = 2)
+obesity_PEP <- format(round(get_PEP(fit_ob1_marg, 2:4), 3), nsmall = 2)
+morbid_obesity_PEP <- format(round(get_PEP(fit_ob3_marg, 2:4), 3), nsmall = 2)
+weight_PEP <- format(round(get_PEP(fit_wt_marg, 1:4), 3), nsmall = 2)
+regr_df <- as.data.frame(matrix(NA, nrow = 4, ncol = 12))
+regr_df[, 12] <- c("Diverse-Local (Ref)", "Local", "Restricted-Imported", "Imported")
+regr_df[, 1] <- obesity_prev
+regr_df[1, 2:4] <- c(1, NA, NA)
+regr_df[2:4, 2:3] <- cbind(obesity[2:4, 1], 
+                           apply(obesity[2:4, ], 1, 
+                                 function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[2:4, 4] <- obesity_PEP
+regr_df[, 5] <- morbid_obesity_prev
+regr_df[1, 6:8] <- c(1, NA, NA)
+regr_df[2:4, 6:7] <- cbind(morbid_obesity[2:4, 1], 
+                           apply(morbid_obesity[2:4, ], 1, 
+                                 function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[2:4, 8] <- morbid_obesity_PEP
+regr_df[1:4, 9:10] <- cbind(weight[1:4, 1], 
+                            apply(weight[1:4, ], 1, 
+                                  function(x) paste0("[",x[2], ", ", x[3], "]")))
+regr_df[, 11] <- weight_PEP
+regr_df %>% gt(rowname_col = "V12") %>%
+  tab_header(title = "Supplementary Table 2: Association between dietary patterns and obesity, morbid obesity, and weight") %>%
+  tab_stubhead(label = "Pattern") %>%
+  tab_spanner(
+    label = "Obesity (BMI >= 30)",
+    columns = c(V1, V2, V3, V4)
+  ) %>% 
+  tab_spanner(
+    label = "Morbid Obesity (BMI >= 40)",
+    columns = c(V5, V6, V7, V8)
+  ) %>% 
+  tab_spanner(
+    label = "Weight (kg)",
+    columns = c(V9, V10, V11)
+  ) %>%
+  tab_options(  # header color
+    stub.border.width = px(2),
+    column_labels.background.color = "#edf8fb"
+  ) %>%
+  sub_missing() %>%
+  cols_align(
+    align = "left"
+  ) %>%
+  tab_style(  # bold signif obesity 
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V2, V3, V4),
+      rows = which(obesity$signif[1:4] == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V6, V7, V8),
+      rows = which(morbid_obesity$signif[1:4] == 1)
+    )
+  )  %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")
+    ),
+    locations = cells_body(
+      columns = c(V9, V10, V11),
+      rows = which(weight$signif[1:4] == 1)
+    )
+  )  %>%
+  cols_label(
+    V1 = "Post Prev",
+    V2 = "Post OR",
+    V3 = "95% Cred Int",
+    V4 = "P(OR <= 1)",
+    V5 = "Post Prev",
+    V6 = "Post OR",
+    V7 = "95% Cred Int",
+    V8 = "P(OR <= 1)",
+    V9 = "Post Mean",
+    V10 = "95% Cred Int",
+    V11 = "P(Mean <= 0)")
+df_table_2 <- regr_df[-12]
+rownames(df_table_2) <- regr_df[, 12]
+colnames(df_table_2) <- c("Post Prev Ob", "Post OR Ob", "95% Cred Int Ob", "PEP Ob",
+                          "Post Prev MOb", "Post OR MOb", "95% Cred Int MOb", "PEP MOb", 
+                          "Post Mean Wt", "95% Cred Int Wt", "PEP Wt")
+write.csv(df_table_2, "Results/Tables/df_supp_table_2_marg_withPEP.csv")
 
 # Check R2
 rsq_ob1 <- bayes_R2(fit_ob1)
@@ -1240,6 +1370,7 @@ means_int_wt <- tapply(tuvalu4$`Weight (kg)`, INDEX=list(tuvalu4$latent_class,
                                                          tuvalu4$ncd), 
                        function(x) {mean(x, na.rm = TRUE)})
 bar3d.ade(means_int_wt)
+
 
 #================= Stratified analyses =========================================
 # OBESITY
