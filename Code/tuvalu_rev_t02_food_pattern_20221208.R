@@ -112,13 +112,13 @@ create_demog_table <- function(dataset, column_names, row_names) {
   # Create table of demographic comparisons stratified by malaria status
   lc_demog <- CreateTableOne(vars = c("region_c", "gender", "age", "age_c", 
                                       "education_c", "ncd", "smoking_c", 
-                                      "exercise"),
+                                      "bmi", "exercise"),
                              factorVars = c("region_c", "gender", "age_c", 
                                             "education_c", "ncd", 
                                             "smoking_c", "exercise"),
                              strata = "latent_class", addOverall = T,
                              data = dataset)
-  lc_demog_tab <- print(lc_demog, noSpaces = TRUE, nonnormal = c("age", "income"))
+  lc_demog_tab <- print(lc_demog, noSpaces = TRUE, nonnormal = c("age", "bmi"))
   #lc_demog_tab <- print(lc_demog, noSpaces = TRUE)
   
   lc_demog_tab <- as.data.frame(lc_demog_tab)[, c(2:5, 1, 6)]
@@ -745,6 +745,7 @@ create_demog_table(tuvalu4 %>%
                                  "Education: >HS (%)",
                                  "NCD: Reported (%)", 
                                  "Smoking: Yes (%)", 
+                                 "Median BMI [IQR]",
                                  "Exercise (%)", "   High", "   Medium", "   Low"))
 
 ## post-hoc pairwise comparisons
@@ -885,7 +886,7 @@ get_output(fit_wt_marg, exponentiate = FALSE)
 
 save(fit_ob1, fit_ob1_int, fit_ob3, fit_ob3_int, fit_wt, fit_wt_int,
      fit_ob1_marg, fit_ob3_marg, fit_wt_marg,
-     file = "all_models.RData")
+     file = "Results/all_models.RData")
 
 # temp <- tuvalu4 %>% drop_na(obesity_1, latent_class, gender, age_center, 
 #                             education_c, smoking_c, exercise, ncd, region_c,
@@ -898,7 +899,7 @@ save(fit_ob1, fit_ob1_int, fit_ob3, fit_ob3_int, fit_wt, fit_wt_int,
 
 #=================== Create table of regression results ========================
 
-load("all_models.RData")
+load("Results/all_models.RData")
 
 obesity <- format(round(get_output(fit_ob1, exponentiate = TRUE), 3), nsmall = 2)
 obesity$signif <- as.integer(obesity$signif)
